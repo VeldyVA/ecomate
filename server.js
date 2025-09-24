@@ -98,17 +98,49 @@ fastify.get("/auth/callback", async (req, reply) => {
     // simpan di session
     req.session.accessToken = tokenResponse.accessToken;
 
-    reply.send({
-      message: "Login sukses, token tersimpan di session!",
-      accessToken: tokenResponse.accessToken,
-      expiresOn: tokenResponse.expiresOn,
-    });
+    // simpan di session
+req.session.accessToken = tokenResponse.accessToken;
+
+const userEmail = tokenResponse.account.username;
+
+// cari employee_id di Dataverse
+const userData = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
+  params: {
+    $filter: `ecom_workemail eq '${userEmail}'`,
+    $select: "_ecom_fullname_value"
+  }
+});
+
+    if (userData.value.length > 0 && userData.value[0]._ecom_fullname_value) {
+      // Store the Employee's GUID in the session
+      req.session.employee_id = userData.value[0]._ecom_fullname_value;
+
+      // Check for admin role and store email and role in session
+      const userEmail = tokenResponse.account.username;
+      const userRole = isAdmin(userEmail) ? "admin" : "employee";
+      req.session.email = userEmail;
+      req.session.role = userRole;
+
+    } else {
+  throw new Error(`Employee GUID (_ecom_fullname_value) not found for email ${userEmail}`);
+}
+
+reply.send({
+  message: "Login sukses, token tersimpan di session!",
+  accessToken: tokenResponse.accessToken,
+  expiresOn: tokenResponse.expiresOn,
+});
   } catch (err) {
     console.error("❌ Acquire token error:", err);
 
     // Jika error dari MSAL
     if (err.errorMessage) {
       console.error("MSAL error message:", err.errorMessage);
+    }
+    
+    // Log detail error dari Dataverse/Axios
+    if (err.response?.data) {
+      console.error("Dataverse error details:", err.response.data);
     }
 
     reply.status(500).send({
@@ -178,11 +210,16 @@ function canAccess(request, employeeId) {
 // 🔹 Middleware JWT Auth
 // ==============================
 fastify.decorate("authenticate", async (req, reply) => {
-  try {
-    await req.jwtVerify();
-  } catch (err) {
-    reply.code(401).send({ error: "Invalid or missing token" });
+  if (!req.session || !req.session.accessToken) {
+    return reply.code(401).send({ error: "Not logged in or session expired" });
   }
+
+  // Optional: inject user info ke req.user
+  req.user = {
+    employeeId: req.session.employeeId,
+    email: req.session.email,
+    role: req.session.role
+  };
 });
 
 // ==============================
@@ -220,7 +257,7 @@ fastify.post("/auth/request-otp", async (req, reply) => {
   const { email } = req.body;
   if (!email) return reply.code(400).send({ message: "Email required" });
 
-  const employees = await dataverseRequest("get", "employees", {
+  const employees = await dataverseRequest(req, "get", "employees", {
     params: {
       $select: "employeeid,email,fullname",
       $filter: `email eq '${email}'`,
@@ -252,11 +289,11 @@ fastify.post("/auth/verify-otp", async (req, reply) => {
 
   const record = otpStore[email.toLowerCase()];
   if (!record || record.otp !== otp || new Date() > record.expiresAt) {
-    return reply.code(400).send({ message: "Invalid or expired OTP" });
-  }
+        return reply.code(400).send({ message: "Invalid or expired OTP" });
+      }
 
-  // Ambil data employee dari Dataverse
-  const employees = await dataverseRequest("get", "employees", {
+      // Ambil data employee dari Dataverse
+      const employees = await dataverseRequest(req, "get", "employees", {
     params: { $select: "employeeid,email,fullname", $filter: `email eq '${email}'` },
   });
 
@@ -274,67 +311,107 @@ fastify.post("/auth/verify-otp", async (req, reply) => {
   return { token };
 });
 
-// 3. GET own profile
-fastify.get("/profile", { preValidation: [fastify.authenticate] }, async (req, reply) => {
-  const { employeeId } = req.user;
-
-  const employee = await dataverseRequest("get", `employees(${employeeId})`, {
-    params: { $select: "employeeid,fullname,email,department,position,contract_type,start_date,probation_end,status" },
-  });
-
-  return employee || { message: "Employee not found" };
-});
-
-// 4. GET profile by ID (Admin)
+// 4. GET profile by ID (Admin) - UPGRADED
 fastify.get("/admin/profile/:employeeId", { preValidation: [fastify.authenticate] }, async (req, reply) => {
-  if (req.user.role !== "admin") return reply.code(403).send({ message: "Admin only" });
+  if (req.user.role !== "admin") {
+    return reply.code(403).send({ message: "Admin only" });
+  }
 
-  const { employeeId } = req.params;
+  const { employeeId } = req.params; // This is the Employee GUID
 
-  const employee = await dataverseRequest("get", `employees(${employeeId})`, {
-    params: { $select: "employeeid,fullname,email,department,position,contract_type,start_date,probation_end,status" },
-  });
+  try {
+    // Find the personal_information record for the given employee GUID
+    const personalInfoData = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
+      params: {
+        $filter: `_ecom_fullname_value eq ${employeeId}`,
+        $select: [
+          "ecom_employeeid", "ecom_employeename", "ecom_gender", "ecom_dateofbirth",
+          "ecom_phonenumber", "ecom_jobtitle", "ecom_status", "ecom_startwork",
+          "ecom_contracttype", "ecom_educationbackground", "ecom_workexperience",
+          "ecom_emergencycontactname", "ecom_emergencycontactaddress", "ecom_emergencycontractphonenumber",
+          "ecom_emergencycontactrelationship", "ecom_address", "ecom_ktpnumber", "ecom_npwpnumber",
+          "ecom_profilepicture", "ecom_notes", "ecom_bankaccountnumber", "ecom_bpjsnumber",
+          "ecom_bpjstknumber", "ecom_maritalstatus", "ecom_numberofdependent", "ecom_placeofbirth",
+          "ecom_religion", "ecom_bankname"
+        ].join(",")
+      }
+    });
 
-  return employee || { message: "Employee not found" };
+    const record = personalInfoData.value?.[0];
+    if (!record) {
+      return reply.code(404).send({ message: "Personal information record not found for this employee." });
+    }
+
+    return record;
+
+  } catch (err) {
+    console.error("❌ Error fetching profile by ID:", err.response?.data || err.message);
+    reply.status(500).send({
+      error: "Failed to fetch profile by ID",
+      details: err.response?.data?.error?.message || err.message,
+    });
+  }
 });
 
 // 5. PATCH update profile (Admin only)
 fastify.patch("/profile/:employeeId", { preValidation: [fastify.authenticate] }, async (req, reply) => {
-  if (req.user.role !== "admin") return reply.code(403).send({ message: "Admin only" });
+  // Per user request, this remains admin-only
+  if (req.user.role !== "admin") {
+    return reply.code(403).send({ message: "Admin only" });
+  }
 
-  const { employeeId } = req.params;
-  const allowedFields = [
-    "fullname","email","position","department",
-    "start_date","probation_end","contract_type","status"
-  ];
-  const updates = {};
-  for (const field of allowedFields) if (field in req.body) updates[field] = req.body[field];
+  const { employeeId } = req.params; // This is the Employee GUID to be updated
 
-  const updated = await dataverseRequest("patch", `employees(${employeeId})`, { data: updates });
-  return updated;
+  try {
+    // 1. Find the personal_information record ID for the target employee
+    const personalInfoData = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
+      params: {
+        // Use the GUID of the employee to find their personal info record
+        $filter: `_ecom_fullname_value eq ${employeeId}`,
+        $select: "ecom_employeepersonalinformationid"
+      }
+    });
+
+    if (!personalInfoData.value || personalInfoData.value.length === 0) {
+      return reply.code(404).send({ message: "Personal information record not found for this employee." });
+    }
+    const personalInfoId = personalInfoData.value[0].ecom_employeepersonalinformationid;
+
+    // 2. Define allowed fields and build the update object
+    const allowedFields = [
+      "ecom_gender", "ecom_dateofbirth", "ecom_phonenumber", "ecom_emergencycontactname",
+      "ecom_emergencycontactaddress", "ecom_emergencycontractphonenumber", "ecom_emergencycontactrelationship",
+      "ecom_address", "ecom_ktpnumber", "ecom_npwpnumber", "ecom_notes", "ecom_bankaccountnumber",
+      "ecom_bpjsnumber", "ecom_bpjstknumber", "ecom_maritalstatus", "ecom_numberofdependent",
+      "ecom_placeofbirth", "ecom_religion", "ecom_bankname", "ecom_personalemail", "ecom_workexperience"
+    ];
+
+    const updates = {};
+    for (const field of allowedFields) {
+      if (req.body[field] !== undefined) {
+        updates[field] = req.body[field];
+      }
+    }
+
+    if (Object.keys(updates).length === 0) {
+        return reply.code(400).send({ message: "No valid fields to update were provided." });
+    }
+
+    // 3. Perform the PATCH request on the personal information record
+    await dataverseRequest(req, "patch", `ecom_employeepersonalinformations(${personalInfoId})`, { data: updates });
+
+    return { message: "Profile updated successfully." };
+
+  } catch (err) {
+    console.error("❌ Error updating profile:", err.response?.data || err.message);
+    reply.status(500).send({
+      error: "Failed to update profile",
+      details: err.response?.data?.error?.message || err.message,
+    });
+  }
 });
 
-// 6. POST new employee (Admin only)
-fastify.post("/profile", { preValidation: [fastify.authenticate] }, async (req, reply) => {
-  if (req.user.role !== "admin") return reply.code(403).send({ message: "Admin only" });
 
-  const newEmployee = req.body;
-  if (!newEmployee.email || !newEmployee.fullname) return reply.code(400).send({ message: "fullname & email required" });
-
-  const toInsert = {
-    fullname: newEmployee.fullname,
-    email: newEmployee.email,
-    position: newEmployee.position || null,
-    department: newEmployee.department || null,
-    start_date: newEmployee.start_date || null,
-    probation_end: newEmployee.probation_end || null,
-    contract_type: newEmployee.contract_type || null,
-    status: newEmployee.status || "active"
-  };
-
-  const inserted = await dataverseRequest("post", "employees", { data: toInsert });
-  return inserted;
-});
 
 console.log("JWT_SECRET:", process.env.JWT_SECRET);
 console.log("ADMIN_EMAILS:", process.env.ADMIN_EMAILS);
@@ -391,93 +468,305 @@ fastify.post("/leave-preview", { preValidation: [fastify.authenticate] }, async 
 });
 
 // ==============================
-// 🔹 Apply Leave
+// 🔹 Cuti: Get Saldo Cuti User
 // ==============================
-fastify.post("/leave/apply", { preValidation: [fastify.authenticate] }, async (req, reply) => {
-  const { leave_type, start_date, days } = req.body;
-  const employeeId = req.user.employeeId;
-  if (!leave_type || !start_date || !days) return reply.code(400).send({ message: "leave_type, start_date, days required" });
+fastify.get("/leave/balance", { preValidation: [fastify.authenticate] }, async (req, reply) => {
+  const employeeId = req.session.employee_id;
 
-  const end_date = calculateEndDate(start_date, days);
+  // NOTE: Assuming 'ecom_leaveusages' is linked to an employee via '_ecom_employee_value'
+  // and to a leave type via '_ecom_leavetype_value'. Please verify these field names.
 
-  // Ambil employee leave balance
-  const empData = await dataverseRequest("get", `employees(${employeeId})`, {
-    params: { $select: "annual_leave_balance,personal_leave_balance,wellbeing_day_balance" }
-  });
+  try {
+    const balanceData = await dataverseRequest(req, "get", "ecom_leaveusages", {
+      params: {
+        $filter: `_ecom_employee_value eq ${employeeId}`,
+        $expand: "ecom_LeaveType($select=ecom_leavetypeid,ecom_name,ecom_quota)",
+        $select: "ecom_balance,ecom_usage"
+      }
+    });
 
-  if (!empData) return reply.code(404).send({ message: "Employee not found" });
+    if (!balanceData.value || balanceData.value.length === 0) {
+      return reply.code(404).send({ message: "No leave balance records found for this employee." });
+    }
 
-  let balanceField = "";
-  let currentBalance = 0;
-  const type = leave_type.toLowerCase().replace(/\s+/g, "_");
+    // Format the response
+    const balances = balanceData.value.map(item => ({
+      leave_type_id: item.ecom_LeaveType.ecom_leavetypeid,
+      leave_type_name: item.ecom_LeaveType.ecom_name,
+      quota: item.ecom_LeaveType.ecom_quota,
+      balance: item.ecom_balance,
+      used: item.ecom_usage
+    }));
 
-  if (type.includes("annual")) { balanceField = "annual_leave_balance"; currentBalance = empData.annual_leave_balance; }
-  else if (type.includes("personal")) { balanceField = "personal_leave_balance"; currentBalance = empData.personal_leave_balance; }
-  else if (type.includes("wellbeing")) { balanceField = "wellbeing_day_balance"; currentBalance = empData.wellbeing_day_balance; }
-  else return reply.code(400).send({ message: "Invalid leave_type" });
+    return balances;
 
-  if (currentBalance < days) return reply.code(400).send({ message: "Insufficient leave balance" });
-
-  // Insert leave request ke Dataverse
-  const toInsert = {
-    employee_id: employeeId,
-    leave_type,
-    start_date,
-    end_date,
-    days,
-    status: "pending",
-    requested_at: new Date().toISOString()
-  };
-
-  const inserted = await dataverseRequest("post", "leave_requests", { data: toInsert });
-
-  // Update employee balance
-  const updates = {}; updates[balanceField] = currentBalance - days;
-  await dataverseRequest("patch", `employees(${employeeId})`, { data: updates });
-
-  return { message: "Leave request applied", start_date, end_date, days, remaining_balance: currentBalance - days };
+  } catch (err) {
+    console.error("❌ Error fetching leave balance:", err.response?.data || err.message);
+    reply.status(500).send({
+      error: "Failed to fetch leave balance",
+      details: err.response?.data?.error?.message || err.message,
+    });
+  }
 });
 
 // ==============================
-// 🔹 Cancel Leave
+// 🔹 Cuti: Get All Leave Types
 // ==============================
-fastify.post("/leave/cancel", { preValidation: [fastify.authenticate] }, async (req, reply) => {
-  const { leave_id } = req.body;
-  if (!leave_id) return reply.code(400).send({ message: "leave_id required" });
+fastify.get("/leave/types", { preValidation: [fastify.authenticate] }, async (req, reply) => {
+  try {
+    const leaveTypesData = await dataverseRequest(req, "get", "ecom_leavetypes", {
+      params: {
+        $filter: "statecode eq 0", // Only fetch active leave types
+        $select: "ecom_leavetypeid,ecom_name,ecom_quota"
+      }
+    });
 
-  const leave = await dataverseRequest("get", `leave_requests(${leave_id})`);
-  if (!leave) return reply.code(404).send({ message: "Leave request not found" });
+    return leaveTypesData.value || [];
 
-  // Employee hanya bisa cancel miliknya
-  if (req.user.role !== "admin" && leave.employee_id !== req.user.employeeId) {
-    return reply.code(403).send({ message: "Access denied" });
+  } catch (err) {
+    console.error("❌ Error fetching leave types:", err.response?.data || err.message);
+    reply.status(500).send({
+      error: "Failed to fetch leave types",
+      details: err.response?.data?.error?.message || err.message,
+    });
+  }
+});
+
+// ==============================
+// 🔹 Cuti: Get User's Leave Requests
+// ==============================
+fastify.get("/leave/requests", { preValidation: [fastify.authenticate] }, async (req, reply) => {
+  const employeeId = req.session.employee_id;
+
+  // NOTE: Assuming 'ecom_employeeleaves' is linked to an employee via '_ecom_employee_value'.
+  try {
+    const requestsData = await dataverseRequest(req, "get", "ecom_employeeleaves", {
+      params: {
+        $filter: `_ecom_employee_value eq ${employeeId}`,
+        $expand: "ecom_LeaveType($select=ecom_name)",
+        $select: "ecom_name,ecom_startdate,ecom_enddate,ecom_numberofdays,ecom_reason,ecom_leavestatus,ecom_pmsmapprovalstatus,ecom_pmsmnote,ecom_hrapprovalstatus,ecom_hrnote",
+        $orderby: "createdon desc"
+      }
+    });
+
+    return requestsData.value || [];
+
+  } catch (err) {
+    console.error("❌ Error fetching user leave requests:", err.response?.data || err.message);
+    reply.status(500).send({
+      error: "Failed to fetch leave requests",
+      details: err.response?.data?.error?.message || err.message,
+    });
+  }
+});
+
+// ==============================
+// 🔹 Cuti: Apply for Leave
+// ==============================
+fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async (req, reply) => {
+  const { leaveTypeId, startDate, days, reason } = req.body;
+  const employeeId = req.session.employee_id;
+
+  if (!leaveTypeId || !startDate || !days) {
+    return reply.code(400).send({ message: "leaveTypeId, startDate, and days are required." });
   }
 
-  if (leave.status !== "pending") return reply.code(400).send({ message: "Only pending leaves can be canceled" });
+  // NOTE: Assumptions about lookup fields. Please verify.
+  // - 'ecom_leaveusages' is linked to employee via '_ecom_employee_value'
+  // - 'ecom_leaveusages' is linked to leave type via '_ecom_leavetype_value'
+  // - 'ecom_employeeleaves' (new request) links to employee via 'ecom_Employee'
+  // - 'ecom_employeeleaves' links to leave type via 'ecom_LeaveType'
 
-  // Kembalikan balance
-  const emp = await dataverseRequest("get", `employees(${leave.employee_id})`, {
-    params: { $select: "annual_leave_balance,personal_leave_balance,wellbeing_day_balance" }
-  });
+  try {
+    // 1. Get current balance for the specified leave type
+    // Assuming leaveTypeId is a GUID and does not need quotes.
+    const balanceData = await dataverseRequest(req, "get", "ecom_leaveusages", {
+      params: {
+        $filter: `_ecom_employee_value eq ${employeeId} and _ecom_leavetype_value eq ${leaveTypeId}`,
+        $select: "ecom_balance"
+      }
+    });
 
-  const type = leave.leave_type.toLowerCase().replace(/\s+/g, "_");
-  let balanceField = "", updatedBalance = 0;
-  if (type.includes("annual")) { balanceField = "annual_leave_balance"; updatedBalance = emp.annual_leave_balance + leave.days; }
-  else if (type.includes("personal")) { balanceField = "personal_leave_balance"; updatedBalance = emp.personal_leave_balance + leave.days; }
-  else if (type.includes("wellbeing")) { balanceField = "wellbeing_day_balance"; updatedBalance = emp.wellbeing_day_balance + leave.days; }
+    const currentBalance = balanceData.value?.[0]?.ecom_balance;
 
-  await dataverseRequest("patch", `employees(${leave.employee_id})`, { data: { [balanceField]: updatedBalance } });
-  await dataverseRequest("delete", `leave_requests(${leave_id})`);
+    if (currentBalance === undefined) {
+      return reply.code(404).send({ message: `No leave balance found for leave type ${leaveTypeId}.` });
+    }
 
-  return { message: "Leave canceled", returned_days: leave.days, new_balance: updatedBalance };
+    // 2. Check if balance is sufficient
+    if (currentBalance < days) {
+      return reply.code(400).send({ message: `Insufficient leave balance. Available: ${currentBalance}, Requested: ${days}.` });
+    }
+
+    // 3. Calculate end date (using existing helper function)
+    const endDate = calculateEndDate(startDate, days);
+
+    // 4. Create the leave request record
+    // The 'ecom_name' is often a required primary name field in Dataverse.
+    // We'll construct a meaningful name for it.
+    const leaveRequestName = `Leave Request - ${employeeId} - ${startDate}`;
+
+    const newLeaveRequest = {
+      "ecom_Employee@odata.bind": `/employees(${employeeId})`,
+      "ecom_LeaveType@odata.bind": `/ecom_leavetypes(${leaveTypeId})`,
+      ecom_name: leaveRequestName,
+      ecom_startdate: startDate,
+      ecom_enddate: endDate,
+      ecom_numberofdays: days,
+      ecom_reason: reason || null,
+      // Set initial status. The value '1' for 'Pending' is a common default.
+      // This might need adjustment based on the actual OptionSet values.
+      ecom_leavestatus: 1, // Assuming 1 = Pending
+      ecom_pmsmapprovalstatus: 1, // Assuming 1 = Pending
+      ecom_hrapprovalstatus: 1 // Assuming 1 = Pending
+    };
+
+    const inserted = await dataverseRequest("post", "ecom_employeeleaves", { data: newLeaveRequest });
+
+    // IMPORTANT: We do NOT update the balance here. The external system will do that upon approval.
+
+    return reply.code(201).send({ 
+      message: "Leave request submitted successfully.", 
+      data: inserted 
+    });
+
+  } catch (err) {
+    console.error("❌ Error applying for leave:", err.response?.data || err.message);
+    reply.status(500).send({
+      error: "Failed to apply for leave",
+      details: err.response?.data?.error?.message || err.message,
+    });
+  }
+});
+
+// ==============================
+// 🔹 Cuti: Cancel a Leave Request
+// ==============================
+fastify.post("/leave/requests/:leaveId/cancel", { preValidation: [fastify.authenticate] }, async (req, reply) => {
+  const { leaveId } = req.params;
+  const employeeId = req.session.employee_id;
+
+  // NOTE: Assumptions about lookup fields and status values.
+  try {
+    // 1. Get the leave request
+    const leaveRequest = await dataverseRequest(req, "get", `ecom_employeeleaves(${leaveId})`, {
+      params: {
+        $select: "ecom_leavestatus,_ecom_employee_value"
+      }
+    });
+
+    // 2. Verify ownership (non-admins can only cancel their own)
+    if (req.user.role !== 'admin' && leaveRequest._ecom_employee_value !== employeeId) {
+      return reply.code(403).send({ message: "You can only cancel your own leave requests." });
+    }
+
+    // 3. Check if status is 'Pending' (assuming value is 1)
+    if (leaveRequest.ecom_leavestatus !== 1) {
+      return reply.code(400).send({ message: "Only requests with 'Pending' status can be cancelled." });
+    }
+
+    // 4. Update status to 'Cancelled'
+    // We deactivate the record and set the status reason to Cancelled.
+    // The actual integer values for statecode and statuscode might differ.
+    const updates = {
+      statecode: 1, // 1 = Inactive
+      statuscode: 2, // Assuming 2 = Cancelled
+      ecom_leavestatus: 3 // Assuming 3 = Cancelled
+    };
+
+    await dataverseRequest("patch", `ecom_employeeleaves(${leaveId})`, { data: updates });
+
+    // IMPORTANT: We do NOT restore the balance here. The external system is responsible for that.
+
+    return { message: `Leave request ${leaveId} has been cancelled.` };
+
+  } catch (err) {
+    console.error("❌ Error cancelling leave request:", err.response?.data || err.message);
+    reply.status(500).send({
+      error: "Failed to cancel leave request",
+      details: err.response?.data?.error?.message || err.message,
+    });
+  }
 });
 
 // ==============================
 // 🔹 Admin: List all leave requests
 // ==============================
-fastify.get("/admin/leave", { preValidation: [fastify.authenticate] }, async (req, reply) => {
-  if (req.user.role !== "admin") return reply.code(403).send({ message: "Admin only" });
+fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, async (req, reply) => {
+  if (req.user.role !== "admin") {
+    return reply.code(403).send({ message: "Admin only" });
+  }
 
-  const leaves = await dataverseRequest("get", "leave_requests");
-  return leaves.value || [];
+  try {
+    const requestsData = await dataverseRequest(req, "get", "ecom_employeeleaves", {
+      params: {
+        // Admin gets all requests, so no employee filter
+        // We expand Employee to show who the request belongs to
+        $expand: "ecom_LeaveType($select=ecom_name),ecom_Employee($select=ecom_employeename)",
+        $select: "ecom_name,ecom_startdate,ecom_enddate,ecom_numberofdays,ecom_leavestatus,ecom_pmsmapprovalstatus,ecom_hrapprovalstatus",
+        $orderby: "createdon desc"
+      }
+    });
+
+    return requestsData.value || [];
+
+  } catch (err) {
+    console.error("❌ Error fetching all leave requests:", err.response?.data || err.message);
+    reply.status(500).send({
+      error: "Failed to fetch all leave requests",
+      details: err.response?.data?.error?.message || err.message,
+    });
+  }
+});
+
+fastify.get("/profile/personal-info", { preValidation: [fastify.authenticate] }, async (req, reply) => {
+  // Ambil EmployeeID dari session/user
+  const employeeId = req.session.employee_id; // sudah di-set di callback
+
+  // Query ke Dataverse: tabel personal information 
+  const data = await dataverseRequest(
+    req,
+    "get",
+    `ecom_employeepersonalinformations`, // perhatikan plural "s"
+  {
+      params: {
+        $filter: `_ecom_fullname_value eq ${employeeId}`,
+        $select: [
+          "ecom_employeeid",
+          "ecom_employeename",
+          "ecom_gender",
+          "ecom_dateofbirth",
+          "ecom_phonenumber",
+          "ecom_status",
+          "ecom_startwork",
+          "ecom_emergencycontactname",
+          "ecom_emergencycontactaddress",
+          "ecom_emergencycontractphonenumber",
+          "ecom_emergencycontactrelationship",
+          "ecom_address",
+          "ecom_ktpnumber",
+          "ecom_npwpnumber",
+          "ecom_bankaccountnumber",
+          "ecom_bpjsnumber",
+          "ecom_bpjstknumber",
+          "ecom_maritalstatus",
+          "ecom_numberofdependent",
+          "ecom_placeofbirth",
+          "ecom_religion",
+          "ecom_bankname",
+          "ecom_personalemail",
+          "ecom_workexperience",
+          "ecom_insurancenumber",  
+          "ecom_profilepicture"  
+
+        ].join(",")
+      }
+    }
+  );
+
+  const record = data.value?.[0];
+if (!record) return reply.code(404).send({ message: "Data not found" });
+
+// Return the simplified record for debugging
+return record;
 });
