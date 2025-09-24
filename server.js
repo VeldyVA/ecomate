@@ -719,6 +719,7 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
   }
 });
 
+// 5. Get Own Profile
 fastify.get("/profile/personal-info", { preValidation: [fastify.authenticate] }, async (req, reply) => {
   // Ambil EmployeeID dari session/user
   const employeeId = req.session.employee_id; // sudah di-set di callback
