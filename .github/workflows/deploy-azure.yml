@@ -1,41 +1,38 @@
-name: Build and Deploy to Azure Web App
+name: Deploy Node.js App to Azure App Service
 
 on:
   push:
     branches:
       - main
-  workflow_dispatch:
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
+      - name: Checkout repo
+        uses: actions/checkout@v3
 
-    - name: Setup Node.js
-      uses: actions/setup-node@v3
-      with:
-        node-version: '22'  # Sesuai versi lokal kamu
-        cache: 'npm'
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
 
-    - name: Install dependencies
-      run: npm ci
+      - name: Install dependencies
+        run: npm install
 
-    - name: Build project
-      run: npm run build  # Kalau ada build step, kalau cuma JS biasa bisa dilewati
+      - name: Build project
+        run: npm run build || echo "No build step"
 
-    - name: Archive artifact
-      uses: actions/upload-artifact@v3
-      with:
-        name: app
-        path: .
-    
-    - name: Deploy to Azure Web App
-      uses: azure/webapps-deploy@v2
-      with:
-        app-name: <NAMA_APP_AZURE>  # ganti dengan nama Web App di Azure
-        slot-name: 'production'
-        publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-        package: .
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy to Azure Web App
+        uses: azure/webapps-deploy@v2
+        with:
+          app-name: 'ecomate'   # ganti nama App Service
+          slot-name: 'production'
+          package: '.'
