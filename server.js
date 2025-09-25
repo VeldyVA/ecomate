@@ -264,9 +264,17 @@ fastify.get("/admin/profile/:employeeId", { preValidation: [fastify.authenticate
 
   try {
     // Find the personal_information record for the given employee GUID
+  let filter;
+  if (employeeId.match(/^[0-9a-fA-F-]{36}$/)) {
+    // kalau format GUID
+    filter = `_ecom_fullname_value eq guid'${employeeId}'`;
+  } else {
+    // kalau kode karyawan
+    filter = `ecom_employeeid eq '${employeeId}'`;
+  }
     const personalInfoData = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
       params: {
-        $filter: `_ecom_fullname_value eq ${employeeId}`,
+        $filter: filter,
         $select: [
           "ecom_employeeid", "ecom_employeename", "ecom_gender", "ecom_dateofbirth",
           "ecom_phonenumber", "ecom_status", "ecom_startwork",
