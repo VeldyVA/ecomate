@@ -1,0 +1,192 @@
+openapi: 3.0.0
+info:
+  title: Ecotech HR API
+  description: API untuk layanan HR internal, termasuk profil karyawan dan manajemen cuti.
+  version: 1.0.0
+servers:
+  - url: http://localhost:3000
+    description: Server development lokal
+
+paths:
+  /login:
+    get:
+      summary: Memulai alur login
+      description: Mengalihkan user ke halaman login Microsoft Azure AD.
+      responses:
+        '302':
+          description: Berhasil dialihkan ke halaman login Microsoft.
+
+  /auth/callback:
+    get:
+      summary: Callback setelah login
+      description: Menangani callback dari Azure AD, menukar authorization code dengan token, dan membuat session.
+      responses:
+        '200':
+          description: Login berhasil, session dibuat.
+        '500':
+          description: Gagal mendapatkan token.
+
+  /profile/personal-info:
+    get:
+      summary: 5. Get Own Profile
+      description: Mengambil data personal lengkap milik user yang sedang login.
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Data profil berhasil diambil.
+        '401':
+          description: Tidak terautentikasi (belum login).
+        '404':
+          description: Data tidak ditemukan.
+
+  /admin/profile/{employeeId}:
+    get:
+      summary: Get Profile by ID (Admin)
+      description: (Admin) Mengambil data personal lengkap milik karyawan berdasarkan GUID-nya.
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: employeeId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: GUID dari karyawan yang ingin dilihat.
+      responses:
+        '200':
+          description: Data profil berhasil diambil.
+        '403':
+          description: Akses ditolak (bukan admin).
+        '404':
+          description: Data tidak ditemukan.
+
+  /profile/{employeeId}:
+    patch:
+      summary: Update Profile (Admin)
+      description: (Admin) Memperbarui data personal seorang karyawan.
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: employeeId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: GUID dari karyawan yang ingin diubah.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ecom_emergencycontactaddress:
+                  type: string
+                ecom_phonenumber:
+                  type: string
+              example:
+                ecom_emergencycontactaddress: "Alamat baru"
+                ecom_phonenumber: "08123456789"
+      responses:
+        '200':
+          description: Profil berhasil diperbarui.
+        '400':
+          description: Tidak ada data valid untuk diubah.
+        '403':
+          description: Akses ditolak (bukan admin).
+
+  /leave/types:
+    get:
+      summary: Get All Leave Types
+      description: Mengambil daftar semua tipe cuti yang aktif.
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Berhasil mengambil daftar tipe cuti.
+
+  /leave/balance:
+    get:
+      summary: Get Saldo Cuti User
+      description: Mengambil informasi saldo cuti milik user yang sedang login.
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Berhasil mengambil data saldo.
+        '404':
+          description: Data saldo cuti untuk user ini tidak ditemukan.
+
+  /leave/requests:
+    get:
+      summary: Get User's Leave Requests
+      description: Mengambil riwayat pengajuan cuti milik user yang sedang login.
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Berhasil mengambil riwayat cuti.
+    post:
+      summary: Apply for Leave
+      description: Mengajukan cuti baru.
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                leaveTypeId:
+                  type: string
+                  format: uuid
+                startDate:
+                  type: string
+                  format: date
+                days:
+                  type: integer
+                reason:
+                  type: string
+              example:
+                leaveTypeId: "guid-tipe-cuti"
+                startDate: "2025-12-20"
+                days: 3
+                reason: "Liburan akhir tahun"
+      responses:
+        '201':
+          description: Pengajuan cuti berhasil dibuat.
+        '400':
+          description: Saldo tidak cukup atau data tidak lengkap.
+
+  /leave/requests/{leaveId}/cancel:
+    post:
+      summary: Cancel a Leave Request
+      description: Membatalkan pengajuan cuti yang statusnya masih 'Pending'.
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: leaveId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: ID dari pengajuan cuti yang ingin dibatalkan.
+      responses:
+        '200':
+          description: Cuti berhasil dibatalkan.
+        '400':
+          description: Hanya cuti 'Pending' yang bisa dibatalkan.
+        '403':
+          description: Akses ditolak.
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: sessionId

@@ -57,7 +57,7 @@ const cca = new ConfidentialClientApplication({
 fastify.get("/login", async (req, reply) => {
   const authCodeUrlParameters = {
     scopes: [`${dataverseBaseUrl}/.default`, "offline_access"], // scope untuk Dataverse + refresh token
-    redirectUri: "http://localhost:3000/auth/callback",
+    redirectUri: process.env.REDIRECT_URI || "http://localhost:3000/auth/callback",
   };
 
   const authUrl = await cca.getAuthCodeUrl(authCodeUrlParameters);
@@ -85,14 +85,14 @@ fastify.get("/auth/callback", async (req, reply) => {
   const tokenRequest = {
     code,
     scopes: [`${dataverseBaseUrl}/.default`],
-    redirectUri: "http://localhost:3000/auth/callback", // HARUS sama persis dengan App Registration
+    redirectUri: process.env.REDIRECT_URI || "http://localhost:3000/auth/callback", // HARUS sama persis dengan App Registration
   };
 
   try {
     const tokenResponse = await cca.acquireTokenByCode({
       code: req.query.code,
       scopes: [`${dataverseBaseUrl}/.default`, "offline_access"],
-      redirectUri: "http://localhost:3000/auth/callback",
+      redirectUri: process.env.REDIRECT_URI || "http://localhost:3000/auth/callback",
     });
 
     // simpan di session
@@ -252,64 +252,7 @@ fastify.get("/whoami", async (request, reply) => {
   }
 });
 
-// 1. Request OTP
-fastify.post("/auth/request-otp", async (req, reply) => {
-  const { email } = req.body;
-  if (!email) return reply.code(400).send({ message: "Email required" });
 
-  const employees = await dataverseRequest(req, "get", "employees", {
-    params: {
-      $select: "employeeid,email,fullname",
-      $filter: `email eq '${email}'`,
-    },
-  });
-
-  if (!employees.value.length) return reply.code(404).send({ message: "Employee not found" });
-
-  const employee = employees.value[0];
-  const otp = generateOTP();
-  const expiresAt = new Date(Date.now() + 5 * 60000); // 5 menit
-
-  otpStore[email.toLowerCase()] = { otp, expiresAt };
-
-  await transporter.sendMail({
-    from: process.env.SMTP_USER,
-    to: email,
-    subject: "Your OTP Code",
-    text: `Kode OTP Anda adalah ${otp}. Berlaku 5 menit.`,
-  });
-
-  return { message: "OTP sent" };
-});
-
-// 2. Verify OTP & Issue JWT
-fastify.post("/auth/verify-otp", async (req, reply) => {
-  const { email, otp } = req.body;
-  if (!email || !otp) return reply.code(400).send({ message: "Email & OTP required" });
-
-  const record = otpStore[email.toLowerCase()];
-  if (!record || record.otp !== otp || new Date() > record.expiresAt) {
-        return reply.code(400).send({ message: "Invalid or expired OTP" });
-      }
-
-      // Ambil data employee dari Dataverse
-      const employees = await dataverseRequest(req, "get", "employees", {
-    params: { $select: "employeeid,email,fullname", $filter: `email eq '${email}'` },
-  });
-
-  if (!employees.value.length) return reply.code(404).send({ message: "Employee not found" });
-  const employee = employees.value[0];
-
-  const token = req.session.accessToken;({
-    employeeId: employee.employeeid,
-    email: employee.email,
-    role: isAdmin(employee.email) ? "admin" : "employee",
-  });
-
-  delete otpStore[email.toLowerCase()]; // OTP sudah dipakai
-
-  return { token };
-});
 
 // 4. GET profile by ID (Admin) - UPGRADED
 fastify.get("/admin/profile/:employeeId", { preValidation: [fastify.authenticate] }, async (req, reply) => {
