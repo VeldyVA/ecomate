@@ -362,9 +362,13 @@ console.log("ADMIN_EMAILS:", process.env.ADMIN_EMAILS);
 // ==============================
 // 🔹 Start server
 // ==============================
-fastify.listen({ port: 3000, host: "0.0.0.0" }, (err, address) => {
+fastify.listen({ port: process.env.PORT || 3000, host: "0.0.0.0" }, (err, address) => {
   if (err) throw err;
   fastify.log.info(`🚀 Server running at ${address}`);
+});
+
+fastify.get("/healthz", async (req, reply) => {
+  return { status: "ok" };
 });
 
 // ==============================
