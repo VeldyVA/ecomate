@@ -269,8 +269,7 @@ fastify.get("/admin/profile/:employeeId", { preValidation: [fastify.authenticate
         $filter: `_ecom_fullname_value eq ${employeeId}`,
         $select: [
           "ecom_employeeid", "ecom_employeename", "ecom_gender", "ecom_dateofbirth",
-          "ecom_phonenumber", "ecom_jobtitle", "ecom_status", "ecom_startwork",
-          "ecom_contracttype", "ecom_educationbackground", "ecom_workexperience",
+          "ecom_phonenumber", "ecom_status", "ecom_startwork",
           "ecom_emergencycontactname", "ecom_emergencycontactaddress", "ecom_emergencycontractphonenumber",
           "ecom_emergencycontactrelationship", "ecom_address", "ecom_ktpnumber", "ecom_npwpnumber",
           "ecom_profilepicture", "ecom_notes", "ecom_bankaccountnumber", "ecom_bpjsnumber",
