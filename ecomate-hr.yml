@@ -1,7 +1,7 @@
 openapi: 3.0.0
 info:
   title: Ecotech HR API
-  description: API untuk layanan HR internal, termasuk profil karyawan dan manajemen cuti.
+  description: 'API untuk layanan HR internal, termasuk profil karyawan dan manajemen cuti.'
   version: 1.0.0
 servers:
   - url: https://ecomate-e3b5cshbgcewfehz.canadacentral-01.azurewebsites.net
@@ -20,18 +20,18 @@ paths:
 
   /auth/callback:
     get:
-      summary: Callback setelah login
-      description: Menangani callback dari Azure AD, menukar authorization code dengan token, dan membuat session.
+      summary: 'Callback setelah login'
+      description: 'Menangani callback dari Azure AD, menukar authorization code dengan token, dan membuat session.'
       responses:
         '200':
-          description: Login berhasil, session dibuat.
+          description: 'Login berhasil, session dibuat.'
         '500':
           description: Gagal mendapatkan token.
 
   /whoami:
     get:
       summary: Get Current User Identity
-      description: Mengambil informasi identitas user yang sedang login dari Dataverse.
+      description: 'Mengambil informasi identitas user yang sedang login dari Dataverse.'
       security:
         - cookieAuth: []
       responses:
@@ -61,21 +61,21 @@ paths:
   /profile/personal-info:
     get:
       summary: Get Own Profile
-      description: Mengambil data personal lengkap milik user yang sedang login.
+      description: 'Mengambil data personal lengkap milik user yang sedang login.'
       security:
         - cookieAuth: []
       responses:
         '200':
           description: Data profil berhasil diambil.
         '401':
-          description: Tidak terautentikasi (belum login).
+          description: 'Tidak terautentikasi (belum login).'
         '404':
           description: Data tidak ditemukan.
 
   /admin/profile/search:
     get:
-      summary: Admin: Search and Get Employee Profile
-      description: (Admin) Mengambil data personal lengkap karyawan berdasarkan GUID, Employee Code (e.g., ES-0022), email, atau nama. Hanya untuk Admin.
+      summary: 'Admin: Search and Get Employee Profile'
+      description: '(Admin) Mengambil data personal lengkap karyawan berdasarkan GUID, Employee Code (e.g., ES-0022), email, atau nama. Hanya untuk Admin.'
       security:
         - cookieAuth: []
       parameters:
@@ -85,40 +85,40 @@ paths:
           schema:
             type: string
             format: uuid
-          description: GUID dari karyawan yang ingin dilihat.
+          description: 'GUID dari karyawan yang ingin dilihat.'
         - name: code
           in: query
           required: false
           schema:
             type: string
-          description: Employee Code (e.g., ES-0022) dari karyawan yang ingin dilihat.
+          description: 'Employee Code (e.g., ES-0022) dari karyawan yang ingin dilihat.'
         - name: email
           in: query
           required: false
           schema:
             type: string
             format: email
-          description: Email karyawan yang ingin dicari.
+          description: 'Email karyawan yang ingin dicari.'
         - name: name
           in: query
           required: false
           schema:
             type: string
-          description: Nama karyawan yang ingin dicari.
+          description: 'Nama karyawan yang ingin dicari.'
       responses:
         '200':
           description: Daftar profil karyawan berhasil diambil.
         '400':
-          description: Parameter pencarian tidak valid. Setidaknya satu dari 'id', 'code', 'email', atau 'name' harus diberikan.
+          description: "Parameter pencarian tidak valid. Setidaknya satu dari 'id', 'code', 'email', atau 'name' harus diberikan."
         '403':
-          description: Akses ditolak (bukan admin).
+          description: 'Akses ditolak (bukan admin).'
         '404':
           description: Karyawan tidak ditemukan.
 
   /profile/{employeeId}:
     patch:
-      summary: Update Profile (Admin)
-      description: (Admin) Memperbarui data personal seorang karyawan.
+      summary: 'Update Profile (Admin)'
+      description: '(Admin) Memperbarui data personal seorang karyawan.'
       security:
         - cookieAuth: []
       parameters:
@@ -128,7 +128,7 @@ paths:
           schema:
             type: string
             format: uuid
-          description: GUID dari karyawan yang ingin diubah.
+          description: 'GUID dari karyawan yang ingin diubah.'
       requestBody:
         required: true
         content:
@@ -189,12 +189,12 @@ paths:
         '400':
           description: Tidak ada data valid untuk diubah.
         '403':
-          description: Akses ditolak (bukan admin).
+          description: 'Akses ditolak (bukan admin).'
 
   /leave-preview:
     post:
       summary: Leave Preview
-      description: Menghitung tanggal selesai cuti berdasarkan tanggal mulai dan jumlah hari.
+      description: 'Menghitung tanggal selesai cuti berdasarkan tanggal mulai dan jumlah hari.'
       security:
         - cookieAuth: []
       requestBody:
@@ -219,12 +219,12 @@ paths:
         '200':
           description: Preview berhasil dihitung.
         '400':
-          description: Input tidak valid (misal, tanggal mulai di masa lalu atau akhir pekan).
+          description: 'Input tidak valid (misal, tanggal mulai di masa lalu atau akhir pekan).'
 
   /leave/types:
     get:
       summary: Get All Leave Types
-      description: Mengambil daftar semua tipe cuti yang aktif.
+      description: 'Mengambil daftar semua tipe cuti yang aktif.'
       security:
         - cookieAuth: []
       responses:
@@ -234,19 +234,19 @@ paths:
   /leave/balance:
     get:
       summary: Get Saldo Cuti User
-      description: Mengambil informasi saldo cuti milik user yang sedang login.
+      description: 'Mengambil informasi saldo cuti milik user yang sedang login.'
       security:
         - cookieAuth: []
       responses:
         '200':
           description: Berhasil mengambil data saldo.
         '404':
-          description: Data saldo cuti untuk user ini tidak ditemukan.
+          description: 'Data saldo cuti untuk user ini tidak ditemukan.'
 
   /leave/requests:
     get:
-      summary: Get User's Leave Requests
-      description: Mengambil riwayat pengajuan cuti milik user yang sedang login.
+      summary: "Get User's Leave Requests"
+      description: 'Mengambil riwayat pengajuan cuti milik user yang sedang login.'
       security:
         - cookieAuth: []
       responses:
@@ -254,7 +254,7 @@ paths:
           description: Berhasil mengambil riwayat cuti.
     post:
       summary: Apply for Leave
-      description: Mengajukan cuti baru.
+      description: 'Mengajukan cuti baru.'
       security:
         - cookieAuth: []
       requestBody:
@@ -283,12 +283,12 @@ paths:
         '201':
           description: Pengajuan cuti berhasil dibuat.
         '400':
-          description: Saldo tidak cukup atau data tidak lengkap.
+          description: 'Saldo tidak cukup atau data tidak lengkap.'
 
   /leave/requests/{leaveId}/cancel:
     post:
       summary: Cancel a Leave Request
-      description: Membatalkan pengajuan cuti yang statusnya masih 'Pending'.
+      description: "Membatalkan pengajuan cuti yang statusnya masih 'Pending'."
       security:
         - cookieAuth: []
       parameters:
@@ -298,26 +298,26 @@ paths:
           schema:
             type: string
             format: uuid
-          description: ID dari pengajuan cuti yang ingin dibatalkan.
+          description: 'ID dari pengajuan cuti yang ingin dibatalkan.'
       responses:
         '200':
           description: Cuti berhasil dibatalkan.
         '400':
-          description: Hanya cuti 'Pending' yang bisa dibatalkan.
+          description: "Hanya cuti 'Pending' yang bisa dibatalkan."
         '403':
           description: Akses ditolak.
 
   /admin/leave-requests:
     get:
-      summary: Admin: List all leave requests
-      description: (Admin) Mengambil semua pengajuan cuti dari semua karyawan.
+      summary: 'Admin: List all leave requests'
+      description: '(Admin) Mengambil semua pengajuan cuti dari semua karyawan.'
       security:
         - cookieAuth: []
       responses:
         '200':
           description: Berhasil mengambil semua data pengajuan cuti.
         '403':
-          description: Akses ditolak (bukan admin).
+          description: 'Akses ditolak (bukan admin).'
 
 components:
   securitySchemes:
