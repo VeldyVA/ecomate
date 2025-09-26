@@ -42,35 +42,26 @@ paths:
         '404':
           description: Data tidak ditemukan.
 
-  /admin/profile/{employeeId}:
+  /admin/profile/search:
     get:
-      summary: Get Profile by ID (Admin)
-      description: (Admin) Mengambil data personal lengkap milik karyawan berdasarkan GUID-nya.
+      summary: Admin: Search and Get Employee Profile
+      description: (Admin) Mengambil data personal lengkap karyawan berdasarkan GUID, Employee Code (e.g., ES-0022), email, atau nama. Hanya untuk Admin.
       security:
         - cookieAuth: []
       parameters:
-        - name: employeeId
-          in: path
-          required: true
+        - name: id
+          in: query
+          required: false
           schema:
             type: string
             format: uuid
           description: GUID dari karyawan yang ingin dilihat.
-      responses:
-        '200':
-          description: Data profil berhasil diambil.
-        '403':
-          description: Akses ditolak (bukan admin).
-        '404':
-          description: Data tidak ditemukan.
-
-  /admin/employees:
-    get:
-      summary: Admin: Search Employees
-      description: (Admin) Mengambil daftar karyawan berdasarkan email atau nama.
-      security:
-        - cookieAuth: []
-      parameters:
+        - name: code
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Employee Code (e.g., ES-0022) dari karyawan yang ingin dilihat.
         - name: email
           in: query
           required: false
@@ -86,13 +77,15 @@ paths:
           description: Nama karyawan yang ingin dicari.
       responses:
         '200':
-          description: Daftar karyawan berhasil diambil.
+          description: Daftar profil karyawan berhasil diambil.
         '400':
-          description: Parameter pencarian tidak valid.
+          description: Parameter pencarian tidak valid. Setidaknya satu dari 'id', 'code', 'email', atau 'name' harus diberikan.
         '403':
           description: Akses ditolak (bukan admin).
         '404':
           description: Karyawan tidak ditemukan.
+
+  
 
   /profile/{employeeId}:
     patch:

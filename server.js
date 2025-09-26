@@ -254,99 +254,65 @@ fastify.get("/whoami", async (request, reply) => {
 
 
 
-// 4. GET profile by ID (Admin) - UPGRADED
-fastify.get("/admin/profile/:employeeId", { preValidation: [fastify.authenticate] }, async (req, reply) => {
-  if (req.user.role !== "admin") {
-    return reply.code(403).send({ message: "Admin only" });
-  }
 
-  const { employeeId } = req.params; // This is the Employee GUID
 
-  try {
-    // Find the personal_information record for the given employee GUID
-  let filter;
-  if (employeeId.match(/^[0-9a-fA-F-]{36}$/)) {
-    // kalau format GUID
-    filter = `ecom_employeeid eq '${employeeId}'`;
-  } else {
-    // kalau kode karyawan
-    filter = `ecom_employeeid eq '${employeeId}'`;
-  }
-    const personalInfoData = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
-      params: {
-        $filter: filter,
-        $select: [
-          "ecom_employeeid", "ecom_employeename", "ecom_gender", "ecom_dateofbirth",
-          "ecom_phonenumber", "ecom_status", "ecom_startwork",
-          "ecom_emergencycontactname", "ecom_emergencycontactaddress", "ecom_emergencycontractphonenumber",
-          "ecom_emergencycontactrelationship", "ecom_address", "ecom_ktpnumber", "ecom_npwpnumber",
-          "ecom_profilepicture", "ecom_notes", "ecom_bankaccountnumber", "ecom_bpjsnumber",
-          "ecom_bpjstknumber", "ecom_maritalstatus", "ecom_numberofdependent", "ecom_placeofbirth",
-          "ecom_religion", "ecom_bankname"
-        ].join(",")
-      }
-    });
 
-    const record = personalInfoData.value?.[0];
-    if (!record) {
-      return reply.code(404).send({ message: "Personal information record not found for this employee." });
-    }
 
-    return record;
-
-  } catch (err) {
-    console.error("❌ Error fetching profile by ID:", err.response?.data || err.message);
-    reply.status(500).send({
-      error: "Failed to fetch profile by ID",
-      details: err.response?.data?.error?.message || err.message,
-    });
-  }
-});
 
 
 
 
 // ==============================
-// 🔹 Admin: Search Employees by Email or Name
+// 🔹 Admin: Search and Get Employee Profile
 // ==============================
-fastify.get("/admin/employees", { preValidation: [fastify.authenticate] }, async (req, reply) => {
+fastify.get("/admin/profile/search", { preValidation: [fastify.authenticate] }, async (req, reply) => {
   if (req.user.role !== "admin") {
     return reply.code(403).send({ message: "Admin only" });
   }
 
-  const { email, name } = req.query;
+  const { id, code, email, name } = req.query;
 
   let filter = "";
-  if (email) {
+  if (id) {
+    filter = `ecom_employeepersonalinformationid eq '${id}'`;
+  } else if (code) {
+    filter = `ecom_employeeid eq '${code}'`;
+  } else if (email) {
     filter = `ecom_workemail eq '${email}'`;
   } else if (name) {
     filter = `ecom_employeename eq '${name}'`;
   } else {
-    return reply.code(400).send({ message: "Either 'email' or 'name' query parameter is required." });
+    return reply.code(400).send({ message: "Setidaknya satu dari 'id', 'code', 'email', atau 'name' harus diberikan." });
   }
 
   try {
-    const employeesData = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
+    const personalInfoData = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
       params: {
         $filter: filter,
-        $select: "ecom_employeeid,ecom_employeename,ecom_workemail"
+        $select: [
+          "ecom_employeepersonalinformationid", "ecom_employeeid", "ecom_employeename", "ecom_gender", "ecom_dateofbirth",
+          "ecom_phonenumber", "ecom_jobtitle", "ecom_status", "ecom_startwork",
+          "ecom_contracttype", "ecom_educationbackground", "ecom_workexperience",
+          "ecom_emergencycontactname", "ecom_emergencycontactaddress", "ecom_emergencycontractphonenumber",
+          "ecom_emergencycontactrelationship", "ecom_address", "ecom_ktpnumber", "ecom_npwpnumber",
+          "ecom_profilepicture", "ecom_notes", "ecom_bankaccountnumber", "ecom_bpjsnumber",
+          "ecom_bpjstknumber", "ecom_maritalstatus", "ecom_numberofdependent", "ecom_placeofbirth",
+          "ecom_religion", "ecom_bankname", "ecom_personalemail", "ecom_workemail"
+        ].join(",")
       }
     });
 
-    if (!employeesData.value || employeesData.value.length === 0) {
-      return reply.code(404).send({ message: "No employee found with the provided criteria." });
+    if (!personalInfoData.value || personalInfoData.value.length === 0) {
+      return reply.code(404).send({ message: "Personal information record not found for the provided criteria." });
     }
 
-    return employeesData.value.map(emp => ({
-      employeeId: emp.ecom_employeeid,
-      employeeName: emp.ecom_employeename,
-      workEmail: emp.ecom_workemail,
-    }));
+    // Mengembalikan array karena pencarian bisa menghasilkan lebih dari satu (misal by name)
+    return personalInfoData.value;
 
   } catch (err) {
-    console.error("❌ Error searching employees:", err.response?.data || err.message);
+    console.error("❌ Error searching employee profile:", err.response?.data || err.message);
     reply.status(500).send({
-      error: "Failed to search employees",
+      error: "Failed to search employee profile",
       details: err.response?.data?.error?.message || err.message,
     });
   }
