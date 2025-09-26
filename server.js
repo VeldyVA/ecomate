@@ -267,7 +267,7 @@ fastify.get("/admin/profile/:employeeId", { preValidation: [fastify.authenticate
   let filter;
   if (employeeId.match(/^[0-9a-fA-F-]{36}$/)) {
     // kalau format GUID
-    filter = `_ecom_fullname_value eq guid'${employeeId}'`;
+    filter = `ecom_employeeid eq '${employeeId}'`;
   } else {
     // kalau kode karyawan
     filter = `ecom_employeeid eq '${employeeId}'`;
