@@ -28,9 +28,39 @@ paths:
         '500':
           description: Gagal mendapatkan token.
 
+  /whoami:
+    get:
+      summary: Get Current User Identity
+      description: Mengambil informasi identitas user yang sedang login dari Dataverse.
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Data identitas berhasil diambil.
+        '401':
+          description: Tidak terautentikasi.
+        '500':
+          description: Gagal memanggil Dataverse.
+
+  /healthz:
+    get:
+      summary: Health Check
+      description: Memeriksa status server.
+      responses:
+        '200':
+          description: Server berjalan dengan baik.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
   /profile/personal-info:
     get:
-      summary: 5. Get Own Profile
+      summary: Get Own Profile
       description: Mengambil data personal lengkap milik user yang sedang login.
       security:
         - cookieAuth: []
@@ -85,8 +115,6 @@ paths:
         '404':
           description: Karyawan tidak ditemukan.
 
-  
-
   /profile/{employeeId}:
     patch:
       summary: Update Profile (Admin)
@@ -108,12 +136,52 @@ paths:
             schema:
               type: object
               properties:
-                ecom_emergencycontactaddress:
+                ecom_gender:
+                  type: integer
+                ecom_dateofbirth:
                   type: string
+                  format: date
                 ecom_phonenumber:
                   type: string
+                ecom_emergencycontactname:
+                  type: string
+                ecom_emergencycontactaddress:
+                  type: string
+                ecom_emergencycontractphonenumber:
+                  type: string
+                ecom_emergencycontactrelationship:
+                  type: string
+                ecom_address:
+                  type: string
+                ecom_ktpnumber:
+                  type: string
+                ecom_npwpnumber:
+                  type: string
+                ecom_notes:
+                  type: string
+                ecom_bankaccountnumber:
+                  type: string
+                ecom_bpjsnumber:
+                  type: string
+                ecom_bpjstknumber:
+                  type: string
+                ecom_maritalstatus:
+                  type: integer
+                ecom_numberofdependent:
+                  type: integer
+                ecom_placeofbirth:
+                  type: string
+                ecom_religion:
+                  type: integer
+                ecom_bankname:
+                  type: string
+                ecom_personalemail:
+                  type: string
+                  format: email
+                ecom_workexperience:
+                  type: string
               example:
-                ecom_emergencycontactaddress: "Alamat baru"
+                ecom_address: "Alamat baru"
                 ecom_phonenumber: "08123456789"
       responses:
         '200':
@@ -122,6 +190,36 @@ paths:
           description: Tidak ada data valid untuk diubah.
         '403':
           description: Akses ditolak (bukan admin).
+
+  /leave-preview:
+    post:
+      summary: Leave Preview
+      description: Menghitung tanggal selesai cuti berdasarkan tanggal mulai dan jumlah hari.
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                start_date:
+                  type: string
+                  format: date
+                days:
+                  type: integer
+              required:
+                - start_date
+                - days
+              example:
+                start_date: "2025-12-20"
+                days: 5
+      responses:
+        '200':
+          description: Preview berhasil dihitung.
+        '400':
+          description: Input tidak valid (misal, tanggal mulai di masa lalu atau akhir pekan).
 
   /leave/types:
     get:
@@ -208,6 +306,18 @@ paths:
           description: Hanya cuti 'Pending' yang bisa dibatalkan.
         '403':
           description: Akses ditolak.
+
+  /admin/leave-requests:
+    get:
+      summary: Admin: List all leave requests
+      description: (Admin) Mengambil semua pengajuan cuti dari semua karyawan.
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Berhasil mengambil semua data pengajuan cuti.
+        '403':
+          description: Akses ditolak (bukan admin).
 
 components:
   securitySchemes:
