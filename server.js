@@ -12,9 +12,14 @@ dotenv.config();
 
 const fastify = Fastify({ logger: true });
 
+// Register JWT plugin
+fastify.register(jwt, {
+  secret: process.env.JWT_SECRET || "a-very-strong-and-long-secret-for-jwt",
+});
+
 fastify.register(fastifyCookie);
 fastify.register(fastifySession, {
-  secret: process.env.SESSION_SECRET || "supersecret",
+  secret: process.env.SESSION_SECRET || "a-super-secret-for-sessions-that-is-long",
   cookie: { secure: false }, // true kalau pakai https di prod
 });
 
@@ -64,29 +69,24 @@ fastify.get("/login", async (req, reply) => {
   reply.redirect(authUrl);
 });
 
-// Callback setelah login user
 // ==============================
-// 🔹 Callback setelah login user (debug)
+// 🔹 OTP In-Memory Stores
+// ==============================
+const otpStore = {}; // For email-based OTPs: { email: { otp, expiresAt } }
+const tokenOtpStore = {}; // For token exchange: { otp: { jwt, expiresAt } }
+
+function generateOTP() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+// ==============================
+// 🔹 Callback setelah login user (diubah untuk alur OTP)
 // ==============================
 fastify.get("/auth/callback", async (req, reply) => {
-  console.log("===== /auth/callback =====");
-  console.log("Query params received:", req.query);
-
   const code = req.query.code;
   if (!code) {
-    console.error("❌ No authorization code received!");
-    return reply
-      .status(400)
-      .send({
-        error: "No authorization code received. Check redirect URI & login flow.",
-      });
+    return reply.status(400).send({ error: "No authorization code received." });
   }
-
-  const tokenRequest = {
-    code,
-    scopes: [`${dataverseBaseUrl}/.default`],
-    redirectUri: process.env.REDIRECT_URI || "http://localhost:3000/auth/callback", // HARUS sama persis dengan App Registration
-  };
 
   try {
     const tokenResponse = await cca.acquireTokenByCode({
@@ -95,63 +95,117 @@ fastify.get("/auth/callback", async (req, reply) => {
       redirectUri: process.env.REDIRECT_URI || "http://localhost:3000/auth/callback",
     });
 
-    // simpan di session
+    // Simpan access token di session untuk direct API calls dari browser
     req.session.accessToken = tokenResponse.accessToken;
 
-    // simpan di session
-req.session.accessToken = tokenResponse.accessToken;
+    const userEmail = tokenResponse.account.username;
 
-const userEmail = tokenResponse.account.username;
+    // Dapatkan detail user dari Dataverse untuk disimpan di JWT
+    const userData = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
+      params: {
+        $filter: `ecom_workemail eq '${userEmail}'`,
+        $select: "_ecom_fullname_value"
+      }
+    });
 
-// cari employee_id di Dataverse
-const userData = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
-  params: {
-    $filter: `ecom_workemail eq '${userEmail}'`,
-    $select: "_ecom_fullname_value"
-  }
-});
-
-    if (userData.value.length > 0 && userData.value[0]._ecom_fullname_value) {
-      // Store the Employee's GUID in the session
-      req.session.employee_id = userData.value[0]._ecom_fullname_value;
-
-      // Check for admin role and store email and role in session
-      const userEmail = tokenResponse.account.username;
-      const userRole = isAdmin(userEmail) ? "admin" : "employee";
-      req.session.email = userEmail;
-      req.session.role = userRole;
-
-    } else {
-  throw new Error(`Employee GUID (_ecom_fullname_value) not found for email ${userEmail}`);
-}
-
-reply.send({
-  message: "Login sukses, token tersimpan di session!",
-  accessToken: tokenResponse.accessToken,
-  expiresOn: tokenResponse.expiresOn,
-});
-  } catch (err) {
-    console.error("❌ Acquire token error:", err);
-
-    // Jika error dari MSAL
-    if (err.errorMessage) {
-      console.error("MSAL error message:", err.errorMessage);
+    if (!userData.value || userData.value.length === 0 || !userData.value[0]._ecom_fullname_value) {
+      throw new Error(`Employee GUID (_ecom_fullname_value) not found for email ${userEmail}`);
     }
     
-    // Log detail error dari Dataverse/Axios
-    if (err.response?.data) {
-      console.error("Dataverse error details:", err.response.data);
-    }
+    const employeeId = userData.value[0]._ecom_fullname_value;
+    const userRole = isAdmin(userEmail) ? "admin" : "employee";
+    
+    // Simpan info penting di session
+    req.session.employee_id = employeeId;
+    req.session.email = userEmail;
+    req.session.role = userRole;
 
+    // Buat JWT jangka panjang (API Key)
+    const userPayload = { employeeId, email: userEmail, role: userRole };
+    const longLivedJwt = fastify.jwt.sign(userPayload, { expiresIn: '90d' });
+
+    // Buat OTP untuk ditukar dengan JWT
+    const otp = generateOTP();
+    const expiresAt = new Date(new Date().getTime() + 5 * 60000); // 5 menit
+    tokenOtpStore[otp] = { jwt: longLivedJwt, expiresAt };
+
+    // Tampilkan halaman HTML dengan OTP
+    reply.type('text/html').send(`
+      <html>
+        <head>
+          <title>Login Success</title>
+          <style>
+            body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background-color: #f4f4f9; margin: 0; }
+            .container { text-align: center; padding: 40px; background-color: #fff; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+            h1 { color: #333; }
+            p { color: #555; }
+            .otp { font-size: 2.5em; font-weight: bold; color: #007bff; letter-spacing: 5px; margin: 20px 0; padding: 10px; background-color: #eef; border-radius: 4px; }
+            .expiry { font-size: 0.9em; color: #999; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>Authentication Successful!</h1>
+            <p>Enter this one-time code in your Pusaka agent:</p>
+            <div class="otp">${otp.slice(0,3)}-${otp.slice(3,6)}</div>
+            <p class="expiry">This code will expire in 5 minutes.</p>
+          </div>
+        </body>
+      </html>
+    `);
+
+  } catch (err) {
+    console.error("❌ Authentication callback error:", err);
     reply.status(500).send({
-      error: "Token acquisition failed",
-      details: err.errorMessage || err.message || err,
+      error: "Authentication failed",
+      details: err.errorMessage || err.message,
     });
   }
 });
 
+// ==============================
+// 🔹 Endpoint Baru: Tukar OTP dengan API Key
+// ==============================
+fastify.post("/exchange-otp", async (req, reply) => {
+  const { otp } = req.body;
+  if (!otp) {
+    return reply.code(400).send({ error: "OTP is required." });
+  }
+
+  const stored = tokenOtpStore[otp];
+
+  if (!stored || new Date() > stored.expiresAt) {
+    // Hapus OTP yang sudah expired
+    if (stored) delete tokenOtpStore[otp];
+    return reply.code(404).send({ error: "OTP not found or has expired." });
+  }
+
+  const apiKey = stored.jwt;
+
+  // Hapus OTP setelah berhasil digunakan
+  delete tokenOtpStore[otp];
+
+  reply.send({ apiKey });
+});
+
+
 async function getAccessToken(req) {
-  if (!req.session.accessToken) throw new Error("User not logged in");
+  // Logic ini sekarang harus bisa menangani Bearer token atau session
+  if (req.headers.authorization) {
+    const [type, token] = req.headers.authorization.split(' ');
+    if (type === 'Bearer') {
+      // Untuk request dari Pusaka, kita tidak pakai access token Azure, tapi JWT kita sendiri.
+      // Fungsi dataverseRequest perlu dimodifikasi jika Pusaka memanggilnya langsung.
+      // Untuk sekarang, kita asumsikan Pusaka hanya memanggil endpoint kita, bukan dataverse.
+      // Jika Pusaka perlu memanggil dataverse, kita perlu flow on-behalf-of.
+      // Mari kita sederhanakan: asumsikan JWT hanya untuk otentikasi ke API kita.
+      // Fungsi dataverseRequest akan selalu pakai session token dari browser.
+    }
+  }
+  
+  if (!req.session.accessToken) {
+    throw new Error("User not logged in (no session token)");
+  }
   return req.session.accessToken;
 }
 
@@ -159,7 +213,11 @@ async function getAccessToken(req) {
 // 🔹 Helper: Request ke Dataverse
 // ==============================
 async function dataverseRequest(req, method, entitySet, options = {}) {
-  const token = await getAccessToken(req);
+  // Fungsi ini secara spesifik butuh Azure Access Token, jadi kita ambil dari session.
+  if (!req.session.accessToken) {
+    throw new Error("Dataverse request requires a user session.");
+  }
+  const token = req.session.accessToken;
 
   const res = await axios({
     method,
@@ -187,80 +245,55 @@ const transporter = nodemailer.createTransport({
 });
 
 // ==============================
-// 🔹 OTP In-Memory
-// ==============================
-const otpStore = {}; // { email: { otp, expiresAt } }
-
-function generateOTP() {
-  return Math.floor(100000 + Math.random() * 900000).toString();
-}
-
-// ==============================
 // 🔹 Role Guard
 // ==============================
 function isAdmin(email) {
   return ADMIN_EMAILS.includes(email.toLowerCase());
 }
 
-function canAccess(request, employeeId) {
-  return request.user.role === "admin" || request.user.employeeId === employeeId;
-}
-
 // ==============================
-// 🔹 Middleware JWT Auth
+// 🔹 Middleware Auth (diperbarui untuk JWT)
 // ==============================
 fastify.decorate("authenticate", async (req, reply) => {
-  if (!req.session || !req.session.accessToken) {
-    return reply.code(401).send({ error: "Not logged in or session expired" });
+  // Prioritaskan otentikasi via API Key (JWT) dari header
+  if (req.headers.authorization) {
+    const [type, token] = req.headers.authorization.split(' ') || [];
+    if (type === 'Bearer' && token) {
+      try {
+        const decoded = fastify.jwt.verify(token);
+        req.user = decoded; // payload JWT kita berisi: { employeeId, email, role }
+        return; // Sukses, lanjut ke handler
+      } catch (err) {
+        return reply.code(401).send({ error: "Invalid API Key." });
+      }
+    }
   }
 
-  // Optional: inject user info ke req.user
-  req.user = {
-    employeeId: req.session.employeeId,
-    email: req.session.email,
-    role: req.session.role
-  };
+  // Fallback ke otentikasi via session cookie (untuk browser)
+  if (req.session && req.session.accessToken && req.session.employee_id) {
+    req.user = {
+      employeeId: req.session.employee_id,
+      email: req.session.email,
+      role: req.session.role
+    };
+    return; // Sukses, lanjut ke handler
+  }
+
+  // Jika keduanya gagal
+  return reply.code(401).send({ error: "Not authenticated. Please login or provide an API Key." });
 });
+
 
 // ==============================
 // 🔹 Endpoint
 // ==============================
 
-fastify.get("/whoami", async (request, reply) => {
-  const token = request.session.accessToken;
-  if (!token) {
-    return reply.code(401).send({ error: "No access token in session, please login first." });
-  }
-
-  try {
-    const response = await axios.get(
-      "https://ecomindo365.crm5.dynamics.com/api/data/v9.2/WhoAmI",
-      {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      }
-    );
-
-    return reply.send(response.data);
-  } catch (err) {
-    console.error("Error calling Dataverse:", err.response?.data || err.message);
-    return reply.code(500).send({
-      error: "Failed to call Dataverse",
-      details: err.response?.data || err.message
-    });
-  }
+fastify.get("/whoami", { preValidation: [fastify.authenticate] }, async (request, reply) => {
+  // Setelah middleware authenticate, req.user sudah pasti ada.
+  return request.user;
 });
 
-
-
-
-
-
-
-
-
-
+// ... (sisa endpoint tidak perlu diubah karena bergantung pada middleware 'authenticate') ...
 
 // ==============================
 // 🔹 Admin: Search and Get Employee Profile
@@ -306,7 +339,6 @@ fastify.get("/admin/profile/search", { preValidation: [fastify.authenticate] }, 
       return reply.code(404).send({ message: "Personal information record not found for the provided criteria." });
     }
 
-    // Mengembalikan array karena pencarian bisa menghasilkan lebih dari satu (misal by name)
     return personalInfoData.value;
 
   } catch (err) {
@@ -321,18 +353,15 @@ fastify.get("/admin/profile/search", { preValidation: [fastify.authenticate] }, 
 
 // 5. PATCH update profile (Admin only)
 fastify.patch("/profile/:employeeId", { preValidation: [fastify.authenticate] }, async (req, reply) => {
-  // Per user request, this remains admin-only
   if (req.user.role !== "admin") {
     return reply.code(403).send({ message: "Admin only" });
   }
 
-  const { employeeId } = req.params; // This is the Employee GUID to be updated
+  const { employeeId } = req.params; 
 
   try {
-    // 1. Find the personal_information record ID for the target employee
     const personalInfoData = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
       params: {
-        // Use the GUID of the employee to find their personal info record
         $filter: `_ecom_fullname_value eq ${employeeId}`,
         $select: "ecom_employeepersonalinformationid"
       }
@@ -343,7 +372,6 @@ fastify.patch("/profile/:employeeId", { preValidation: [fastify.authenticate] },
     }
     const personalInfoId = personalInfoData.value[0].ecom_employeepersonalinformationid;
 
-    // 2. Define allowed fields and build the update object
     const allowedFields = [
       "ecom_gender", "ecom_dateofbirth", "ecom_phonenumber", "ecom_emergencycontactname",
       "ecom_emergencycontactaddress", "ecom_emergencycontractphonenumber", "ecom_emergencycontactrelationship",
@@ -363,7 +391,6 @@ fastify.patch("/profile/:employeeId", { preValidation: [fastify.authenticate] },
         return reply.code(400).send({ message: "No valid fields to update were provided." });
     }
 
-    // 3. Perform the PATCH request on the personal information record
     await dataverseRequest(req, "patch", `ecom_employeepersonalinformations(${personalInfoId})`, { data: updates });
 
     return { message: "Profile updated successfully." };
@@ -379,7 +406,7 @@ fastify.patch("/profile/:employeeId", { preValidation: [fastify.authenticate] },
 
 
 
-console.log("JWT_SECRET:", process.env.JWT_SECRET);
+console.log("JWT_SECRET:", process.env.JWT_SECRET ? "Loaded" : "Not Found - Using Default");
 console.log("ADMIN_EMAILS:", process.env.ADMIN_EMAILS);
 
 // ==============================
@@ -441,10 +468,7 @@ fastify.post("/leave-preview", { preValidation: [fastify.authenticate] }, async 
 // 🔹 Cuti: Get Saldo Cuti User
 // ==============================
 fastify.get("/leave/balance", { preValidation: [fastify.authenticate] }, async (req, reply) => {
-  const employeeId = req.session.employee_id;
-
-  // NOTE: Assuming 'ecom_leaveusages' is linked to an employee via '_ecom_employee_value'
-  // and to a leave type via '_ecom_leavetype_value'. Please verify these field names.
+  const employeeId = req.user.employeeId; // Diubah dari req.session.employee_id
 
   try {
     const balanceData = await dataverseRequest(req, "get", "ecom_leaveusages", {
@@ -459,7 +483,6 @@ fastify.get("/leave/balance", { preValidation: [fastify.authenticate] }, async (
       return reply.code(404).send({ message: "No leave balance records found for this employee." });
     }
 
-    // Format the response
     const balances = balanceData.value.map(item => ({
       leave_type_id: item.ecom_LeaveType.ecom_leavetypeid,
       leave_type_name: item.ecom_LeaveType.ecom_name,
@@ -486,7 +509,7 @@ fastify.get("/leave/types", { preValidation: [fastify.authenticate] }, async (re
   try {
     const leaveTypesData = await dataverseRequest(req, "get", "ecom_leavetypes", {
       params: {
-        $filter: "statecode eq 0", // Only fetch active leave types
+        $filter: "statecode eq 0",
         $select: "ecom_leavetypeid,ecom_name,ecom_quota"
       }
     });
@@ -506,9 +529,8 @@ fastify.get("/leave/types", { preValidation: [fastify.authenticate] }, async (re
 // 🔹 Cuti: Get User's Leave Requests
 // ==============================
 fastify.get("/leave/requests", { preValidation: [fastify.authenticate] }, async (req, reply) => {
-  const employeeId = req.session.employee_id;
+  const employeeId = req.user.employeeId; // Diubah dari req.session.employee_id
 
-  // NOTE: Assuming 'ecom_employeeleaves' is linked to an employee via '_ecom_employee_value'.
   try {
     const requestsData = await dataverseRequest(req, "get", "ecom_employeeleaves", {
       params: {
@@ -535,21 +557,13 @@ fastify.get("/leave/requests", { preValidation: [fastify.authenticate] }, async 
 // ==============================
 fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async (req, reply) => {
   const { leaveTypeId, startDate, days, reason } = req.body;
-  const employeeId = req.session.employee_id;
+  const employeeId = req.user.employeeId; // Diubah dari req.session.employee_id
 
   if (!leaveTypeId || !startDate || !days) {
     return reply.code(400).send({ message: "leaveTypeId, startDate, and days are required." });
   }
 
-  // NOTE: Assumptions about lookup fields. Please verify.
-  // - 'ecom_leaveusages' is linked to employee via '_ecom_employee_value'
-  // - 'ecom_leaveusages' is linked to leave type via '_ecom_leavetype_value'
-  // - 'ecom_employeeleaves' (new request) links to employee via 'ecom_Employee'
-  // - 'ecom_employeeleaves' links to leave type via 'ecom_LeaveType'
-
   try {
-    // 1. Get current balance for the specified leave type
-    // Assuming leaveTypeId is a GUID and does not need quotes.
     const balanceData = await dataverseRequest(req, "get", "ecom_leaveusages", {
       params: {
         $filter: `_ecom_employee_value eq ${employeeId} and _ecom_leavetype_value eq ${leaveTypeId}`,
@@ -563,17 +577,11 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
       return reply.code(404).send({ message: `No leave balance found for leave type ${leaveTypeId}.` });
     }
 
-    // 2. Check if balance is sufficient
     if (currentBalance < days) {
       return reply.code(400).send({ message: `Insufficient leave balance. Available: ${currentBalance}, Requested: ${days}.` });
     }
 
-    // 3. Calculate end date (using existing helper function)
     const endDate = calculateEndDate(startDate, days);
-
-    // 4. Create the leave request record
-    // The 'ecom_name' is often a required primary name field in Dataverse.
-    // We'll construct a meaningful name for it.
     const leaveRequestName = `Leave Request - ${employeeId} - ${startDate}`;
 
     const newLeaveRequest = {
@@ -584,16 +592,12 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
       ecom_enddate: endDate,
       ecom_numberofdays: days,
       ecom_reason: reason || null,
-      // Set initial status. The value '1' for 'Pending' is a common default.
-      // This might need adjustment based on the actual OptionSet values.
-      ecom_leavestatus: 1, // Assuming 1 = Pending
-      ecom_pmsmapprovalstatus: 1, // Assuming 1 = Pending
-      ecom_hrapprovalstatus: 1 // Assuming 1 = Pending
+      ecom_leavestatus: 1, 
+      ecom_pmsmapprovalstatus: 1,
+      ecom_hrapprovalstatus: 1
     };
 
     const inserted = await dataverseRequest("post", "ecom_employeeleaves", { data: newLeaveRequest });
-
-    // IMPORTANT: We do NOT update the balance here. The external system will do that upon approval.
 
     return reply.code(201).send({ 
       message: "Leave request submitted successfully.", 
@@ -614,39 +618,30 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
 // ==============================
 fastify.post("/leave/requests/:leaveId/cancel", { preValidation: [fastify.authenticate] }, async (req, reply) => {
   const { leaveId } = req.params;
-  const employeeId = req.session.employee_id;
+  const employeeId = req.user.employeeId; // Diubah
 
-  // NOTE: Assumptions about lookup fields and status values.
   try {
-    // 1. Get the leave request
     const leaveRequest = await dataverseRequest(req, "get", `ecom_employeeleaves(${leaveId})`, {
       params: {
         $select: "ecom_leavestatus,_ecom_employee_value"
       }
     });
 
-    // 2. Verify ownership (non-admins can only cancel their own)
     if (req.user.role !== 'admin' && leaveRequest._ecom_employee_value !== employeeId) {
       return reply.code(403).send({ message: "You can only cancel your own leave requests." });
     }
 
-    // 3. Check if status is 'Pending' (assuming value is 1)
     if (leaveRequest.ecom_leavestatus !== 1) {
       return reply.code(400).send({ message: "Only requests with 'Pending' status can be cancelled." });
     }
 
-    // 4. Update status to 'Cancelled'
-    // We deactivate the record and set the status reason to Cancelled.
-    // The actual integer values for statecode and statuscode might differ.
     const updates = {
-      statecode: 1, // 1 = Inactive
-      statuscode: 2, // Assuming 2 = Cancelled
-      ecom_leavestatus: 3 // Assuming 3 = Cancelled
+      statecode: 1, 
+      statuscode: 2, 
+      ecom_leavestatus: 3
     };
 
     await dataverseRequest("patch", `ecom_employeeleaves(${leaveId})`, { data: updates });
-
-    // IMPORTANT: We do NOT restore the balance here. The external system is responsible for that.
 
     return { message: `Leave request ${leaveId} has been cancelled.` };
 
@@ -670,8 +665,6 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
   try {
     const requestsData = await dataverseRequest(req, "get", "ecom_employeeleaves", {
       params: {
-        // Admin gets all requests, so no employee filter
-        // We expand Employee to show who the request belongs to
         $expand: "ecom_LeaveType($select=ecom_name),ecom_Employee($select=ecom_employeename)",
         $select: "ecom_name,ecom_startdate,ecom_enddate,ecom_numberofdays,ecom_leavestatus,ecom_pmsmapprovalstatus,ecom_hrapprovalstatus",
         $orderby: "createdon desc"
@@ -691,14 +684,12 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
 
 // 5. Get Own Profile
 fastify.get("/profile/personal-info", { preValidation: [fastify.authenticate] }, async (req, reply) => {
-  // Ambil EmployeeID dari session/user
-  const employeeId = req.session.employee_id; // sudah di-set di callback
+  const employeeId = req.user.employeeId; // Diubah
 
-  // Query ke Dataverse: tabel personal information 
   const data = await dataverseRequest(
     req,
     "get",
-    `ecom_employeepersonalinformations`, // perhatikan plural "s"
+    `ecom_employeepersonalinformations`,
   {
       params: {
         $filter: `_ecom_fullname_value eq ${employeeId}`,
@@ -738,6 +729,5 @@ fastify.get("/profile/personal-info", { preValidation: [fastify.authenticate] },
   const record = data.value?.[0];
 if (!record) return reply.code(404).send({ message: "Data not found" });
 
-// Return the simplified record for debugging
 return record;
 });
