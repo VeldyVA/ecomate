@@ -303,6 +303,53 @@ fastify.get("/admin/profile/:employeeId", { preValidation: [fastify.authenticate
   }
 });
 
+// ==============================
+// 🔹 Admin: Search Employees by Email or Name
+// ==============================
+fastify.get("/admin/employees/search", { preValidation: [fastify.authenticate] }, async (req, reply) => {
+  if (req.user.role !== "admin") {
+    return reply.code(403).send({ message: "Admin only" });
+  }
+
+  const { email, name } = req.query;
+
+  let filter = "";
+  if (email) {
+    filter = `ecom_workemail eq '${email}'`;
+  } else if (name) {
+    filter = `ecom_employeename eq '${name}'`;
+  } else {
+    return reply.code(400).send({ message: "Either 'email' or 'name' query parameter is required." });
+  }
+
+  try {
+    const employeesData = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
+      params: {
+        $filter: filter,
+        $select: "ecom_employeeid,ecom_employeename,ecom_workemail"
+      }
+    });
+
+    if (!employeesData.value || employeesData.value.length === 0) {
+      return reply.code(404).send({ message: "No employee found with the provided criteria." });
+    }
+
+    return employeesData.value.map(emp => ({
+      employeeId: emp.ecom_employeeid,
+      employeeName: emp.ecom_employeename,
+      workEmail: emp.ecom_workemail,
+    }));
+
+  } catch (err) {
+    console.error("❌ Error searching employees:", err.response?.data || err.message);
+    reply.status(500).send({
+      error: "Failed to search employees",
+      details: err.response?.data?.error?.message || err.message,
+    });
+  }
+});
+
+
 // 5. PATCH update profile (Admin only)
 fastify.patch("/profile/:employeeId", { preValidation: [fastify.authenticate] }, async (req, reply) => {
   // Per user request, this remains admin-only
