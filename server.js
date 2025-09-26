@@ -303,10 +303,13 @@ fastify.get("/admin/profile/:employeeId", { preValidation: [fastify.authenticate
   }
 });
 
+
+
+
 // ==============================
 // 🔹 Admin: Search Employees by Email or Name
 // ==============================
-fastify.get("/admin/employees/search", { preValidation: [fastify.authenticate] }, async (req, reply) => {
+fastify.get("/admin/employees", { preValidation: [fastify.authenticate] }, async (req, reply) => {
   if (req.user.role !== "admin") {
     return reply.code(403).send({ message: "Admin only" });
   }

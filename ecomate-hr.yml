@@ -64,6 +64,36 @@ paths:
         '404':
           description: Data tidak ditemukan.
 
+  /admin/employees:
+    get:
+      summary: Admin: Search Employees
+      description: (Admin) Mengambil daftar karyawan berdasarkan email atau nama.
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: email
+          in: query
+          required: false
+          schema:
+            type: string
+            format: email
+          description: Email karyawan yang ingin dicari.
+        - name: name
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Nama karyawan yang ingin dicari.
+      responses:
+        '200':
+          description: Daftar karyawan berhasil diambil.
+        '400':
+          description: Parameter pencarian tidak valid.
+        '403':
+          description: Akses ditolak (bukan admin).
+        '404':
+          description: Karyawan tidak ditemukan.
+
   /profile/{employeeId}:
     patch:
       summary: Update Profile (Admin)
