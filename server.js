@@ -189,35 +189,45 @@ fastify.post("/exchange-otp", async (req, reply) => {
 });
 
 
-async function getAccessToken(req) {
-  // Logic ini sekarang harus bisa menangani Bearer token atau session
-  if (req.headers.authorization) {
-    const [type, token] = req.headers.authorization.split(' ');
-    if (type === 'Bearer') {
-      // Untuk request dari Pusaka, kita tidak pakai access token Azure, tapi JWT kita sendiri.
-      // Fungsi dataverseRequest perlu dimodifikasi jika Pusaka memanggilnya langsung.
-      // Untuk sekarang, kita asumsikan Pusaka hanya memanggil endpoint kita, bukan dataverse.
-      // Jika Pusaka perlu memanggil dataverse, kita perlu flow on-behalf-of.
-      // Mari kita sederhanakan: asumsikan JWT hanya untuk otentikasi ke API kita.
-      // Fungsi dataverseRequest akan selalu pakai session token dari browser.
+// ==============================
+// 🔹 Dataverse App-Level Token Management
+// ==============================
+let appTokenCache = {
+  token: null,
+  expiresOn: 0
+};
+
+async function getAppLevelDataverseToken() {
+  const now = Date.now();
+  // Refresh token if it's expired or will expire in the next 5 minutes
+  if (!appTokenCache.token || now >= appTokenCache.expiresOn - 300000) {
+    fastify.log.info("Acquiring new application-level Dataverse token...");
+    const tokenRequest = {
+      scopes: [`${dataverseBaseUrl}/.default`],
+    };
+    try {
+      const response = await cca.acquireTokenByClientCredential(tokenRequest);
+      appTokenCache = {
+        token: response.accessToken,
+        // MSAL gives expiresOn in seconds, convert to milliseconds
+        expiresOn: response.expiresOn * 1000 
+      };
+      fastify.log.info("Successfully acquired new application-level token.");
+    } catch (error) {
+      fastify.log.error("Failed to acquire application-level token", error);
+      throw new Error("Could not acquire application-level token for Dataverse.");
     }
   }
-  
-  if (!req.session.accessToken) {
-    throw new Error("User not logged in (no session token)");
-  }
-  return req.session.accessToken;
+  return appTokenCache.token;
 }
 
 // ==============================
-// 🔹 Helper: Request ke Dataverse
+// 🔹 Helper: Request ke Dataverse (Refactored)
 // ==============================
 async function dataverseRequest(req, method, entitySet, options = {}) {
-  // Fungsi ini secara spesifik butuh Azure Access Token, jadi kita ambil dari session.
-  if (!req.session.accessToken) {
-    throw new Error("Dataverse request requires a user session.");
-  }
-  const token = req.session.accessToken;
+  // Logic ini diubah untuk selalu menggunakan App-level token (Client Credentials)
+  // agar bisa dipanggil dari mana saja (baik browser session maupun API Key) tanpa bergantung pada session user.
+  const token = await getAppLevelDataverseToken();
 
   const res = await axios({
     method,
