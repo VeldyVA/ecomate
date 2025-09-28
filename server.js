@@ -684,50 +684,42 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
 
 // 5. Get Own Profile
 fastify.get("/profile/personal-info", { preValidation: [fastify.authenticate] }, async (req, reply) => {
-  const employeeId = req.user.employeeId; // Diubah
+  const employeeId = req.user.employeeId;
 
-  const data = await dataverseRequest(
-    req,
-    "get",
-    `ecom_employeepersonalinformations`,
-  {
-      params: {
-        $filter: `_ecom_fullname_value eq ${employeeId}`,
-        $select: [
-          "ecom_employeeid",
-          "ecom_employeename",
-          "ecom_gender",
-          "ecom_dateofbirth",
-          "ecom_phonenumber",
-          "ecom_status",
-          "ecom_startwork",
-          "ecom_emergencycontactname",
-          "ecom_emergencycontactaddress",
-          "ecom_emergencycontractphonenumber",
-          "ecom_emergencycontactrelationship",
-          "ecom_address",
-          "ecom_ktpnumber",
-          "ecom_npwpnumber",
-          "ecom_bankaccountnumber",
-          "ecom_bpjsnumber",
-          "ecom_bpjstknumber",
-          "ecom_maritalstatus",
-          "ecom_numberofdependent",
-          "ecom_placeofbirth",
-          "ecom_religion",
-          "ecom_bankname",
-          "ecom_personalemail",
-          "ecom_workexperience",
-          "ecom_insurancenumber",  
-          "ecom_profilepicture"  
-
-        ].join(",")
+  try {
+    const data = await dataverseRequest(
+      req,
+      "get",
+      "ecom_employeepersonalinformations",
+      {
+        params: {
+          $filter: `_ecom_fullname_value eq ${employeeId}`,
+          $select: [
+            "ecom_employeeid", "ecom_employeename", "ecom_gender", "ecom_dateofbirth",
+            "ecom_phonenumber", "ecom_status", "ecom_startwork", "ecom_workexperience",
+            "ecom_emergencycontactname", "ecom_emergencycontactaddress", "ecom_emergencycontractphonenumber",
+            "ecom_emergencycontactrelationship", "ecom_address", "ecom_ktpnumber", "ecom_npwpnumber",
+            "ecom_profilepicture", "ecom_notes", "ecom_bankaccountnumber", "ecom_bpjsnumber",
+            "ecom_bpjstknumber", "ecom_maritalstatus", "ecom_numberofdependent", "ecom_placeofbirth",
+            "ecom_religion", "ecom_bankname", "ecom_personalemail", "ecom_insurancenumber"
+          ].join(",")
+        }
       }
+    );
+
+    if (!data.value || data.value.length === 0) {
+      fastify.log.warn(`Profile not found for employeeId: ${employeeId}`);
+      return reply.code(404).send({ message: "Personal information record not found for your user." });
     }
-  );
 
-  const record = data.value?.[0];
-if (!record) return reply.code(404).send({ message: "Data not found" });
+    // Return the single record object, not the array
+    return data.value[0];
 
-return record;
+  } catch (err) {
+    console.error("❌ Error fetching own profile:", err.response?.data || err.message);
+    reply.status(500).send({
+      error: "Failed to fetch profile",
+      details: err.response?.data?.error?.message || err.message,
+    });
+  }
 });
