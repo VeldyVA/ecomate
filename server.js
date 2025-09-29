@@ -13,8 +13,12 @@ dotenv.config();
 const fastify = Fastify({ logger: true });
 
 // Register JWT plugin
+if (!process.env.JWT_SECRET) {
+  fastify.log.error("FATAL: JWT_SECRET environment variable is not set.");
+  process.exit(1);
+}
 fastify.register(jwt, {
-  secret: process.env.JWT_SECRET || "a-very-strong-and-long-secret-for-jwt",
+  secret: process.env.JWT_SECRET,
 });
 
 fastify.register(fastifyCookie);
