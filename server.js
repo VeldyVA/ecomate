@@ -513,6 +513,79 @@ fastify.get("/leave/balance", { preValidation: [fastify.authenticate] }, async (
 });
 
 // ==============================
+// 🔹 Admin: Search for employee's leave balance
+// ==============================
+fastify.get("/admin/leave-balance/search", { preValidation: [fastify.authenticate] }, async (req, reply) => {
+  if (req.user.role !== "admin") {
+    return reply.code(403).send({ message: "Admin only" });
+  }
+
+  const { employeeId, email } = req.query;
+
+  if (!employeeId && !email) {
+    return reply.code(400).send({ message: "Either employeeId or email must be provided." });
+  }
+
+  let filter;
+  if (employeeId) {
+    filter = `_ecom_employee_value eq ${employeeId}`;
+  } else {
+    // We need to get the employeeId from the email first
+    try {
+      const userData = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
+        params: {
+          $filter: `ecom_workemail eq '${email}'`,
+          $select: "_ecom_fullname_value"
+        }
+      });
+
+      if (!userData.value || userData.value.length === 0 || !userData.value[0]._ecom_fullname_value) {
+        return reply.code(404).send({ message: `Employee not found for email ${email}` });
+      }
+      const foundEmployeeId = userData.value[0]._ecom_fullname_value;
+      filter = `_ecom_employee_value eq ${foundEmployeeId}`;
+    } catch (err) {
+      console.error("❌ Error fetching employee by email:", err.response?.data || err.message);
+      return reply.status(500).send({
+        error: "Failed to fetch employee by email",
+        details: err.response?.data?.error?.message || err.message,
+      });
+    }
+  }
+
+  try {
+    const balanceData = await dataverseRequest(req, "get", "ecom_leaveusages", {
+      params: {
+        $filter: filter,
+        $expand: "ecom_LeaveType($select=ecom_leavetypeid,ecom_name,ecom_quota)",
+        $select: "ecom_balance,ecom_usage"
+      }
+    });
+
+    if (!balanceData.value || balanceData.value.length === 0) {
+      return reply.code(404).send({ message: "No leave balance records found for this employee." });
+    }
+
+    const balances = balanceData.value.map(item => ({
+      leave_type_id: item.ecom_LeaveType.ecom_leavetypeid,
+      leave_type_name: item.ecom_LeaveType.ecom_name,
+      quota: item.ecom_LeaveType.ecom_quota,
+      balance: item.ecom_balance,
+      used: item.ecom_usage
+    }));
+
+    return balances;
+
+  } catch (err) {
+    console.error("❌ Error fetching leave balance:", err.response?.data || err.message);
+    reply.status(500).send({
+      error: "Failed to fetch leave balance",
+      details: err.response?.data?.error?.message || err.message,
+    });
+  }
+});
+
+// ==============================
 // 🔹 Cuti: Get All Leave Types
 // ==============================
 fastify.get("/leave/types", { preValidation: [fastify.authenticate] }, async (req, reply) => {
@@ -688,6 +761,68 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
     console.error("❌ Error fetching all leave requests:", err.response?.data || err.message);
     reply.status(500).send({
       error: "Failed to fetch all leave requests",
+      details: err.response?.data?.error?.message || err.message,
+    });
+  }
+});
+
+// ==============================
+// 🔹 Admin: Search for employee's leave requests
+// ==============================
+fastify.get("/admin/leave-requests/search", { preValidation: [fastify.authenticate] }, async (req, reply) => {
+  if (req.user.role !== "admin") {
+    return reply.code(403).send({ message: "Admin only" });
+  }
+
+  const { employeeId, email } = req.query;
+
+  if (!employeeId && !email) {
+    return reply.code(400).send({ message: "Either employeeId or email must be provided." });
+  }
+
+  let filter;
+  if (employeeId) {
+    filter = `_ecom_employee_value eq ${employeeId}`;
+  } else {
+    // We need to get the employeeId from the email first
+    try {
+      const userData = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
+        params: {
+          $filter: `ecom_workemail eq '${email}'`,
+          $select: "_ecom_fullname_value"
+        }
+      });
+
+      if (!userData.value || userData.value.length === 0 || !userData.value[0]._ecom_fullname_value) {
+        return reply.code(404).send({ message: `Employee not found for email ${email}` });
+      }
+      const foundEmployeeId = userData.value[0]._ecom_fullname_value;
+      filter = `_ecom_employee_value eq ${foundEmployeeId}`;
+    } catch (err) {
+      console.error("❌ Error fetching employee by email:", err.response?.data || err.message);
+      return reply.status(500).send({
+        error: "Failed to fetch employee by email",
+        details: err.response?.data?.error?.message || err.message,
+      });
+    }
+  }
+
+  try {
+    const requestsData = await dataverseRequest(req, "get", "ecom_employeeleaves", {
+      params: {
+        $filter: filter,
+        $expand: "ecom_LeaveType($select=ecom_name)",
+        $select: "ecom_name,ecom_startdate,ecom_enddate,ecom_numberofdays,ecom_reason,ecom_leavestatus,ecom_pmsmapprovalstatus,ecom_pmsmnote,ecom_hrapprovalstatus,ecom_hrnote",
+        $orderby: "createdon desc"
+      }
+    });
+
+    return requestsData.value || [];
+
+  } catch (err) {
+    console.error("❌ Error fetching user leave requests:", err.response?.data || err.message);
+    reply.status(500).send({
+      error: "Failed to fetch leave requests",
       details: err.response?.data?.error?.message || err.message,
     });
   }

@@ -1,0 +1,9 @@
+JWT_SECRET: Loaded
+ADMIN_EMAILS: veldy.verdiyansyah@ecomindo.com,nurul.margi@ecomindo.com,rizkia.tri@ecomindo.com
+{"level":30,"time":1759117024225,"pid":67116,"hostname":"Veldys-MacBook-Air-21.local","msg":"Server listening at http://127.0.0.1:3000"}
+{"level":30,"time":1759117024225,"pid":67116,"hostname":"Veldys-MacBook-Air-21.local","msg":"Server listening at http://10.101.12.161:3000"}
+{"level":30,"time":1759117024225,"pid":67116,"hostname":"Veldys-MacBook-Air-21.local","msg":"🚀 Server running at http://127.0.0.1:3000"}
+{"level":30,"time":1759117049193,"pid":67116,"hostname":"Veldys-MacBook-Air-21.local","reqId":"req-1","req":{"method":"GET","url":"/login","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":61576},"msg":"incoming request"}
+{"level":30,"time":1759117049221,"pid":67116,"hostname":"Veldys-MacBook-Air-21.local","reqId":"req-1","res":{"statusCode":302},"responseTime":26.56487500667572,"msg":"request completed"}
+{"level":30,"time":1759117272618,"pid":67116,"hostname":"Veldys-MacBook-Air-21.local","reqId":"req-2","req":{"method":"GET","url":"/login","host":"localhost:3000","remoteAddress":"127.0.0.1","remotePort":61922},"msg":"incoming request"}
+{"level":30,"time":1759117272632,"pid":67116,"hostname":"Veldys-MacBook-Air-21.local","reqId":"req-2","res":{"statusCode":302},"responseTime":13.07700002193451,"msg":"request completed"}
