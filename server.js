@@ -136,6 +136,7 @@ fastify.get("/auth/callback", async (req, reply) => {
       const otp = generateOTP();
       const expiresAt = new Date(new Date().getTime() + 5 * 60000); // 5 menit
       tokenOtpStore[otp] = { jwt: longLivedJwt, expiresAt };
+      console.log('OTP generated and stored:', tokenOtpStore);
 
       // Tampilkan halaman HTML dengan OTP
       reply.type('text/html').send(`
@@ -176,6 +177,7 @@ fastify.get("/auth/callback", async (req, reply) => {
 // 🔹 Endpoint Baru: Tukar OTP dengan API Key
 // ==============================
 fastify.post("/exchange-otp", async (req, reply) => {
+  console.log('Request to /exchange-otp. tokenOtpStore:', tokenOtpStore);
   const { otp } = req.body;
   if (!otp) {
     return reply.code(400).send({ error: "OTP is required." });
