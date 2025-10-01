@@ -442,12 +442,16 @@ function formatDateUTC(date) {
 
 function calculateEndDate(startDateStr, days) {
   const start = parseDateUTC(startDateStr);
-  let workDays = 0;
+  let remainingDays = days;
   const current = new Date(start);
-  while (workDays < days) {
+  while (remainingDays > 0) {
     const dow = current.getUTCDay();
-    if (dow !== 0 && dow !== 6) workDays++;
-    if (workDays < days) current.setUTCDate(current.getUTCDate() + 1);
+    if (dow !== 0 && dow !== 6) {
+      remainingDays--;
+    }
+    if (remainingDays > 0) {
+      current.setUTCDate(current.getUTCDate() + 1);
+    }
   }
   return formatDateUTC(current);
 }
@@ -562,7 +566,8 @@ fastify.get("/leave/requests", { preValidation: [fastify.authenticate] }, async 
 // 🔹 Cuti: Apply for Leave
 // ==============================
 fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async (req, reply) => {
-  const { leaveTypeId, startDate, days, reason } = req.body;
+  const { leaveTypeId, startDate, reason } = req.body;
+  const days = req.body.days || req.body.ecom_days;
   const employeeId = req.user.employeeId; // Diubah dari req.session.employee_id
 
   if (!leaveTypeId || !startDate || !days) {
