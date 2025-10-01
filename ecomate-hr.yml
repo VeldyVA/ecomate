@@ -232,6 +232,29 @@ paths:
         - bearerAuth: []
       # ... (sisa definisi sama)
 
+  /admin/leave-requests/search:
+    get:
+      summary: 'Admin: Search for employee''s leave requests'
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: employeeId
+          in: query
+          schema:
+            type: string
+          description: 'GUID dari karyawan.'
+        - name: email
+          in: query
+          schema:
+            type: string
+          description: 'Email karyawan.'
+      responses:
+        '200':
+          description: Daftar permintaan cuti karyawan berhasil diambil.
+        '403':
+          description: 'Akses ditolak (bukan admin).'
+
 components:
   securitySchemes:
     cookieAuth:

@@ -694,6 +694,68 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
   }
 });
 
+// ==============================
+// 🔹 Admin: Search for employee's leave requests
+// ==============================
+fastify.get("/admin/leave-requests/search", { preValidation: [fastify.authenticate] }, async (req, reply) => {
+  if (req.user.role !== "admin") {
+    return reply.code(403).send({ message: "Admin only" });
+  }
+
+  const { employeeId, email } = req.query;
+
+  if (!employeeId && !email) {
+    return reply.code(400).send({ message: "Either employeeId or email must be provided." });
+  }
+
+  let filter;
+  if (employeeId) {
+    filter = `_ecom_employee_value eq ${employeeId}`;
+  } else {
+    // We need to get the employeeId from the email first
+    try {
+      const userData = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
+        params: {
+          $filter: `ecom_workemail eq '${email}'`,
+          $select: "_ecom_fullname_value"
+        }
+      });
+
+      if (!userData.value || userData.value.length === 0 || !userData.value[0]._ecom_fullname_value) {
+        return reply.code(404).send({ message: `Employee not found for email ${email}` });
+      }
+      const foundEmployeeId = userData.value[0]._ecom_fullname_value;
+      filter = `_ecom_employee_value eq ${foundEmployeeId}`;
+    } catch (err) {
+      console.error("❌ Error fetching employee by email:", err.response?.data || err.message);
+      return reply.status(500).send({
+        error: "Failed to fetch employee by email",
+        details: err.response?.data?.error?.message || err.message,
+      });
+    }
+  }
+
+  try {
+    const requestsData = await dataverseRequest(req, "get", "ecom_employeeleaves", {
+      params: {
+        $filter: filter,
+        $expand: "ecom_LeaveType($select=ecom_name)",
+        $select: "ecom_name,ecom_startdate,ecom_enddate,ecom_numberofdays,ecom_reason,ecom_leavestatus,ecom_pmsmapprovalstatus,ecom_pmsmnote,ecom_hrapprovalstatus,ecom_hrnote",
+        $orderby: "createdon desc"
+      }
+    });
+
+    return requestsData.value || [];
+
+  } catch (err) {
+    console.error("❌ Error fetching user leave requests:", err.response?.data || err.message);
+    reply.status(500).send({
+      error: "Failed to fetch leave requests",
+      details: err.response?.data?.error?.message || err.message,
+    });
+  }
+});
+
 // 5. Get Own Profile
 fastify.get("/profile/personal-info", { preValidation: [fastify.authenticate] }, async (req, reply) => {
   const employeeId = req.user.employeeId;
