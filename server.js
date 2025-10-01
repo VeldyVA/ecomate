@@ -226,9 +226,16 @@ async function getAppLevelDataverseToken() {
 // 🔹 Helper: Request ke Dataverse (Refactored)
 // ==============================
 async function dataverseRequest(req, method, entitySet, options = {}) {
-  // Logic ini diubah untuk selalu menggunakan App-level token (Client Credentials)
-  // agar bisa dipanggil dari mana saja (baik browser session maupun API Key) tanpa bergantung pada session user.
-  const token = await getAppLevelDataverseToken();
+  let token;
+  // Prioritaskan token user dari session jika ada (untuk alur login via browser)
+  if (req.session && req.session.accessToken) {
+    fastify.log.info("Using user-delegated token from session.");
+    token = req.session.accessToken;
+  } else {
+    // Jika tidak ada session (misal: request via API Key), gunakan token aplikasi
+    fastify.log.info("No user session token found, falling back to application-level token.");
+    token = await getAppLevelDataverseToken();
+  }
 
   const res = await axios({
     method,
