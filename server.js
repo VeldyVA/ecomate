@@ -132,6 +132,7 @@ fastify.get("/auth/callback", async (req, reply) => {
     const otp = generateOTP();
     const expiresAt = new Date(new Date().getTime() + 5 * 60000); // 5 menit
     tokenOtpStore[otp] = { jwt: longLivedJwt, expiresAt };
+    console.log('OTP generated and stored:', tokenOtpStore); // New log
 
     // Tampilkan halaman HTML dengan OTP
     reply.type('text/html').send(`
@@ -202,27 +203,17 @@ let appTokenCache = {
 };
 
 async function getAppLevelDataverseToken() {
-  const now = Date.now();
-  // Refresh token if it's expired or will expire in the next 5 minutes
-  if (!appTokenCache.token || now >= appTokenCache.expiresOn - 300000) {
-    fastify.log.info("Acquiring new application-level Dataverse token...");
-    const tokenRequest = {
-      scopes: [`${dataverseBaseUrl}/.default`],
-    };
-    try {
-      const response = await cca.acquireTokenByClientCredential(tokenRequest);
-      appTokenCache = {
-        token: response.accessToken,
-        // MSAL gives expiresOn in seconds, convert to milliseconds
-        expiresOn: response.expiresOn * 1000 
-      };
-      fastify.log.info("Successfully acquired new application-level token.");
-    } catch (error) {
-      fastify.log.error("Failed to acquire application-level token", error);
-      throw new Error("Could not acquire application-level token for Dataverse.");
-    }
+  fastify.log.info("Acquiring new application-level Dataverse token...");
+  const tokenRequest = {
+    scopes: [`${dataverseBaseUrl}/.default`],
+  };
+  try {
+    const response = await cca.acquireTokenByClientCredential(tokenRequest);
+    return response.accessToken;
+  } catch (error) {
+    fastify.log.error("Failed to acquire application-level token", error);
+    throw new Error("Could not acquire application-level token for Dataverse.");
   }
-  return appTokenCache.token;
 }
 
 // ==============================
@@ -313,6 +304,7 @@ fastify.get("/whoami", { preValidation: [fastify.authenticate] }, async (request
 // 🔹 Admin: Search and Get Employee Profile
 // ==============================
 fastify.get("/admin/profile/search", { preValidation: [fastify.authenticate] }, async (req, reply) => {
+  console.log("Request received at /admin/profile/search"); // New log
   if (req.user.role !== "admin") {
     return reply.code(403).send({ message: "Admin only" });
   }
@@ -356,7 +348,7 @@ fastify.get("/admin/profile/search", { preValidation: [fastify.authenticate] }, 
     return personalInfoData.value;
 
   } catch (err) {
-    console.error("❌ Error searching employee profile:", err.response?.data || err.message);
+    console.error("❌ Error searching employee profile:", err.response ? JSON.stringify(err.response.data, null, 2) : err.message);
     reply.status(500).send({
       error: "Failed to search employee profile",
       details: err.response?.data?.error?.message || err.message,
