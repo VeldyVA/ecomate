@@ -126,38 +126,42 @@ fastify.get("/auth/callback", async (req, reply) => {
 
     // Buat JWT jangka panjang (API Key)
     const userPayload = { employeeId, email: userEmail, role: userRole };
-    const longLivedJwt = fastify.jwt.sign(userPayload, { expiresIn: '90d' });
+    fastify.jwt.sign(userPayload, { expiresIn: '90d' }, (err, longLivedJwt) => {
+      if (err) {
+        console.error("❌ Error signing JWT:", err);
+        return reply.status(500).send({ error: "Failed to sign JWT." });
+      }
 
-    // Buat OTP untuk ditukar dengan JWT
-    const otp = generateOTP();
-    const expiresAt = new Date(new Date().getTime() + 5 * 60000); // 5 menit
-    tokenOtpStore[otp] = { jwt: longLivedJwt, expiresAt };
-    console.log('OTP generated and stored:', tokenOtpStore); // New log
+      // Buat OTP untuk ditukar dengan JWT
+      const otp = generateOTP();
+      const expiresAt = new Date(new Date().getTime() + 5 * 60000); // 5 menit
+      tokenOtpStore[otp] = { jwt: longLivedJwt, expiresAt };
 
-    // Tampilkan halaman HTML dengan OTP
-    reply.type('text/html').send(`
-      <html>
-        <head>
-          <title>Login Success</title>
-          <style>
-            body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background-color: #f4f4f9; margin: 0; }
-            .container { text-align: center; padding: 40px; background-color: #fff; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
-            h1 { color: #333; }
-            p { color: #555; }
-            .otp { font-size: 2.5em; font-weight: bold; color: #007bff; letter-spacing: 5px; margin: 20px 0; padding: 10px; background-color: #eef; border-radius: 4px; }
-            .expiry { font-size: 0.9em; color: #999; }
-          </style>
-        </head>
-        <body>
-          <div class="container">
-            <h1>Authentication Successful!</h1>
-            <p>Enter this one-time code in your Pusaka agent:</p>
-            <div class="otp">${otp.slice(0,3)}-${otp.slice(3,6)}</div>
-            <p class="expiry">This code will expire in 5 minutes.</p>
-          </div>
-        </body>
-      </html>
-    `);
+      // Tampilkan halaman HTML dengan OTP
+      reply.type('text/html').send(`
+        <html>
+          <head>
+            <title>Login Success</title>
+            <style>
+              body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background-color: #f4f4f9; margin: 0; }
+              .container { text-align: center; padding: 40px; background-color: #fff; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+              h1 { color: #333; }
+              p { color: #555; }
+              .otp { font-size: 2.5em; font-weight: bold; color: #007bff; letter-spacing: 5px; margin: 20px 0; padding: 10px; background-color: #eef; border-radius: 4px; }
+              .expiry { font-size: 0.9em; color: #999; }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <h1>Authentication Successful!</h1>
+              <p>Enter this one-time code in your Pusaka agent:</p>
+              <div class="otp">${otp.slice(0,3)}-${otp.slice(3,6)}</div>
+              <p class="expiry">This code will expire in 5 minutes.</p>
+            </div>
+          </body>
+        </html>
+      `);
+    });
 
   } catch (err) {
     console.error("❌ Authentication callback error:", err);
