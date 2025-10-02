@@ -493,8 +493,8 @@ fastify.get("/leave/balance", { preValidation: [fastify.authenticate] }, async (
     const balanceData = await dataverseRequest(req, "get", "ecom_leaveusages", {
       params: {
         $filter: `_ecom_employee_value eq ${employeeId}`,
-        $expand: "ecom_LeaveType($select=ecom_leavetypeid,ecom_name,ecom_quota)",
-        $select: "ecom_balance,ecom_usage"
+        $expand: "ecom_leavetype($select=ecom_leavetypeid,ecom_name,ecom_quota)",
+        $select: "ecom_balance"
       }
     });
 
@@ -503,11 +503,10 @@ fastify.get("/leave/balance", { preValidation: [fastify.authenticate] }, async (
     }
 
     const balances = balanceData.value.map(item => ({
-      leave_type_id: item.ecom_LeaveType.ecom_leavetypeid,
-      leave_type_name: item.ecom_LeaveType.ecom_name,
-      quota: item.ecom_LeaveType.ecom_quota,
-      balance: item.ecom_balance,
-      used: item.ecom_usage
+      leave_type_id: item.ecom_leavetype.ecom_leavetypeid,
+      leave_type_name: item.ecom_leavetype.ecom_name,
+      quota: item.ecom_leavetype.ecom_quota,
+      balance: item.ecom_balance
     }));
 
     return balances;
@@ -566,8 +565,8 @@ fastify.get("/admin/leave-balance/search", { preValidation: [fastify.authenticat
     const balanceData = await dataverseRequest(req, "get", "ecom_leaveusages", {
       params: {
         $filter: filter,
-        $expand: "ecom_LeaveType($select=ecom_leavetypeid,ecom_name,ecom_quota)",
-        $select: "ecom_balance,ecom_usage"
+        $expand: "ecom_leavetype($select=ecom_leavetypeid,ecom_name,ecom_quota)",
+        $select: "ecom_balance"
       }
     });
 
@@ -576,11 +575,10 @@ fastify.get("/admin/leave-balance/search", { preValidation: [fastify.authenticat
     }
 
     const balances = balanceData.value.map(item => ({
-      leave_type_id: item.ecom_LeaveType.ecom_leavetypeid,
-      leave_type_name: item.ecom_LeaveType.ecom_name,
-      quota: item.ecom_LeaveType.ecom_quota,
-      balance: item.ecom_balance,
-      used: item.ecom_usage
+      leave_type_id: item.ecom_leavetype.ecom_leavetypeid,
+      leave_type_name: item.ecom_leavetype.ecom_name,
+      quota: item.ecom_leavetype.ecom_quota,
+      balance: item.ecom_balance
     }));
 
     return balances;
@@ -627,7 +625,7 @@ fastify.get("/leave/requests", { preValidation: [fastify.authenticate] }, async 
     const requestsData = await dataverseRequest(req, "get", "ecom_employeeleaves", {
       params: {
         $filter: `_ecom_employee_value eq ${employeeId}`,
-        $expand: "ecom_LeaveType($select=ecom_name)",
+        $expand: "ecom_leavetype($select=ecom_name)",
         $select: "ecom_name,ecom_startdate,ecom_enddate,ecom_numberofdays,ecom_reason,ecom_leavestatus,ecom_pmsmapprovalstatus,ecom_pmsmnote,ecom_hrapprovalstatus,ecom_hrnote",
         $orderby: "createdon desc"
       }
@@ -757,7 +755,7 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
   try {
     const requestsData = await dataverseRequest(req, "get", "ecom_employeeleaves", {
       params: {
-        $expand: "ecom_LeaveType($select=ecom_name),ecom_Employee($select=ecom_employeename)",
+        $expand: "ecom_leavetype($select=ecom_name),ecom_employee($select=ecom_employeename)",
         $select: "ecom_name,ecom_startdate,ecom_enddate,ecom_numberofdays,ecom_leavestatus,ecom_pmsmapprovalstatus,ecom_hrapprovalstatus",
         $orderby: "createdon desc"
       }
@@ -819,7 +817,7 @@ fastify.get("/admin/leave-requests/search", { preValidation: [fastify.authentica
     const requestsData = await dataverseRequest(req, "get", "ecom_employeeleaves", {
       params: {
         $filter: filter,
-        $expand: "ecom_LeaveType($select=ecom_name)",
+        $expand: "ecom_leavetype($select=ecom_name)",
         $select: "ecom_name,ecom_startdate,ecom_enddate,ecom_numberofdays,ecom_reason,ecom_leavestatus,ecom_pmsmapprovalstatus,ecom_pmsmnote,ecom_hrapprovalstatus,ecom_hrnote",
         $orderby: "createdon desc"
       }
