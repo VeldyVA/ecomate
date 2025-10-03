@@ -493,7 +493,7 @@ fastify.get("/leave/balance", { preValidation: [fastify.authenticate] }, async (
     const balanceData = await dataverseRequest(req, "get", "ecom_leaveusages", {
       params: {
         $filter: `_ecom_employee_value eq ${employeeId}`,
-        $expand: "ecom_LeaveType($select=ecom_leavetypeid,ecom_name,ecom_quota),ecom_employee($select=ecom_employeename)",
+        $expand: "ecom_LeaveType($select=ecom_leavetypeid,ecom_name,ecom_quota)",
         $select: "ecom_balance"
       }
     });
@@ -502,8 +502,6 @@ fastify.get("/leave/balance", { preValidation: [fastify.authenticate] }, async (
       return reply.code(404).send({ message: "No leave balance records found for this employee." });
     }
 
-    const employeeName = balanceData.value[0].ecom_employee.ecom_employeename;
-
     const balances = balanceData.value.map(item => ({
       leave_type_id: item.ecom_LeaveType.ecom_leavetypeid,
       leave_type_name: item.ecom_LeaveType.ecom_name,
@@ -511,10 +509,7 @@ fastify.get("/leave/balance", { preValidation: [fastify.authenticate] }, async (
       balance: item.ecom_balance
     }));
 
-    return { 
-      employee_name: employeeName,
-      balances: balances
-    };
+    return balances;
 
   } catch (err) {
     console.error("❌ Error fetching leave balance:", err.response?.data || err.message);
@@ -533,39 +528,53 @@ fastify.get("/admin/leave-balance/search", { preValidation: [fastify.authenticat
     return reply.code(403).send({ message: "Admin only" });
   }
 
-  const { employeeId, email, name } = req.query;
+  const { employeeId, email } = req.query;
 
-  if (!employeeId && !email && !name) {
-    return reply.code(400).send({ message: "Either employeeId, email or name must be provided." });
+  if (!employeeId && !email) {
+    return reply.code(400).send({ message: "Either employeeId or email must be provided." });
   }
 
   let filter;
-  const expand = "ecom_LeaveType($select=ecom_leavetypeid,ecom_name,ecom_quota),ecom_employee($select=ecom_employeename,ecom_workemail)";
-
   if (employeeId) {
     filter = `_ecom_employee_value eq ${employeeId}`;
-  } else if (email) {
-    filter = `ecom_employee/ecom_workemail eq '${email.toLowerCase()}'`;
-  } else if (name) {
-    filter = `contains(tolower(ecom_employee/ecom_employeename), '${name.toLowerCase()}')`;
+  } else {
+    // We need to get the employeeId from the email first
+    try {
+      const userData = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
+        params: {
+          $filter: `ecom_workemail eq '${email}'`,
+          $select: "_ecom_fullname_value"
+        }
+      });
+
+      if (!userData.value || userData.value.length === 0 || !userData.value[0]._ecom_fullname_value) {
+        return reply.code(404).send({ message: `Employee not found for email ${email}` });
+      }
+      const foundEmployeeId = userData.value[0]._ecom_fullname_value;
+      filter = `_ecom_employee_value eq ${foundEmployeeId}`;
+    } catch (err) {
+      console.error("❌ Error fetching employee by email:", err.response?.data || err.message);
+      return reply.status(500).send({
+        error: "Failed to fetch employee by email",
+        details: err.response?.data?.error?.message || err.message,
+      });
+    }
   }
 
   try {
     const balanceData = await dataverseRequest(req, "get", "ecom_leaveusages", {
       params: {
         $filter: filter,
-        $expand: expand,
+        $expand: "ecom_LeaveType($select=ecom_leavetypeid,ecom_name,ecom_quota)",
         $select: "ecom_balance"
       }
     });
 
     if (!balanceData.value || balanceData.value.length === 0) {
-      return reply.code(404).send({ message: "No leave balance records found for the provided criteria." });
+      return reply.code(404).send({ message: "No leave balance records found for this employee." });
     }
 
     const balances = balanceData.value.map(item => ({
-      employee_name: item.ecom_employee.ecom_employeename,
-      work_email: item.ecom_employee.ecom_workemail,
       leave_type_id: item.ecom_LeaveType.ecom_leavetypeid,
       leave_type_name: item.ecom_LeaveType.ecom_name,
       quota: item.ecom_LeaveType.ecom_quota,

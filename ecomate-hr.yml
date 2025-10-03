@@ -200,33 +200,7 @@ paths:
       security:
         - cookieAuth: []
         - bearerAuth: []
-      responses:
-        '200':
-          description: Saldo cuti berhasil diambil.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  employee_name:
-                    type: string
-                  balances:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        leave_type_id:
-                          type: string
-                        leave_type_name:
-                          type: string
-                        quota:
-                          type: number
-                        balance:
-                          type: number
-        '401':
-          description: 'Tidak terautentikasi (belum login).'
-        '404':
-          description: Data tidak ditemukan.
+      # ... (sisa definisi sama)
 
   /leave/requests:
     get:
@@ -283,7 +257,7 @@ paths:
 
   /admin/leave-balance/search:
     get:
-      summary: "Admin: Search for employee's leave balance"
+      summary: 'Admin: Search for employee''s leave balance'
       security:
         - cookieAuth: []
         - bearerAuth: []
@@ -298,39 +272,11 @@ paths:
           schema:
             type: string
           description: 'Email karyawan.'
-        - name: name
-          in: query
-          schema:
-            type: string
-          description: 'Nama karyawan (pencarian parsial).'
       responses:
         '200':
           description: Daftar saldo cuti karyawan berhasil diambil.
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  type: object
-                  properties:
-                    employee_name:
-                      type: string
-                    work_email:
-                      type: string
-                    leave_type_id:
-                      type: string
-                    leave_type_name:
-                      type: string
-                    quota:
-                      type: number
-                    balance:
-                      type: number
-        '400':
-          description: 'Parameter tidak valid.'
         '403':
           description: 'Akses ditolak (bukan admin).'
-        '404':
-          description: 'Data tidak ditemukan.'
 
 components:
   securitySchemes:
