@@ -257,7 +257,7 @@ paths:
 
   /admin/leave-balance/search:
     get:
-      summary: 'Admin: Search for employee''s leave balance'
+      summary: "Admin: Search for employee's leave balance"
       security:
         - cookieAuth: []
         - bearerAuth: []
@@ -272,6 +272,11 @@ paths:
           schema:
             type: string
           description: 'Email karyawan.'
+        - name: name
+          in: query
+          schema:
+            type: string
+          description: 'Nama karyawan.'
       responses:
         '200':
           description: Daftar saldo cuti karyawan berhasil diambil.

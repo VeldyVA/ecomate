@@ -528,34 +528,40 @@ fastify.get("/admin/leave-balance/search", { preValidation: [fastify.authenticat
     return reply.code(403).send({ message: "Admin only" });
   }
 
-  const { employeeId, email } = req.query;
+  const { employeeId, email, name } = req.query;
 
-  if (!employeeId && !email) {
-    return reply.code(400).send({ message: "Either employeeId or email must be provided." });
+  if (!employeeId && !email && !name) {
+    return reply.code(400).send({ message: "Either employeeId, email or name must be provided." });
   }
 
-  let filter;
+  let employeeFilter;
   if (employeeId) {
-    filter = `_ecom_employee_value eq ${employeeId}`;
+    employeeFilter = `_ecom_employee_value eq ${employeeId}`;
   } else {
-    // We need to get the employeeId from the email first
+    let personalInfoFilter;
+    if (email) {
+      personalInfoFilter = `tolower(ecom_workemail) eq '${email.toLowerCase()}'`;
+    } else { // name
+      personalInfoFilter = `contains(tolower(ecom_employeename), '${name.toLowerCase()}')`;
+    }
+
     try {
       const userData = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
         params: {
-          $filter: `ecom_workemail eq '${email}'`,
+          $filter: personalInfoFilter,
           $select: "_ecom_fullname_value"
         }
       });
 
       if (!userData.value || userData.value.length === 0 || !userData.value[0]._ecom_fullname_value) {
-        return reply.code(404).send({ message: `Employee not found for email ${email}` });
+        return reply.code(404).send({ message: `Employee not found for the provided criteria.` });
       }
       const foundEmployeeId = userData.value[0]._ecom_fullname_value;
-      filter = `_ecom_employee_value eq ${foundEmployeeId}`;
+      employeeFilter = `_ecom_employee_value eq ${foundEmployeeId}`;
     } catch (err) {
-      console.error("❌ Error fetching employee by email:", err.response?.data || err.message);
+      console.error("❌ Error fetching employee by email/name:", err.response?.data || err.message);
       return reply.status(500).send({
-        error: "Failed to fetch employee by email",
+        error: "Failed to fetch employee by email/name",
         details: err.response?.data?.error?.message || err.message,
       });
     }
@@ -564,7 +570,7 @@ fastify.get("/admin/leave-balance/search", { preValidation: [fastify.authenticat
   try {
     const balanceData = await dataverseRequest(req, "get", "ecom_leaveusages", {
       params: {
-        $filter: filter,
+        $filter: employeeFilter,
         $expand: "ecom_LeaveType($select=ecom_leavetypeid,ecom_name,ecom_quota)",
         $select: "ecom_balance"
       }
