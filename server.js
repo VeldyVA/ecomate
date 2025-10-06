@@ -178,10 +178,13 @@ fastify.get("/auth/callback", async (req, reply) => {
 // ==============================
 fastify.post("/exchange-otp", async (req, reply) => {
   console.log('Request to /exchange-otp. tokenOtpStore:', tokenOtpStore);
-  const { otp } = req.body;
+  let { otp } = req.body;
   if (!otp) {
     return reply.code(400).send({ error: "OTP is required." });
   }
+
+  // Handle OTP with or without hyphen
+  otp = otp.replace(/-/g, "");
 
   const stored = tokenOtpStore[otp];
 
@@ -330,9 +333,9 @@ fastify.get("/admin/profile/search", { preValidation: [fastify.authenticate] }, 
   } else if (code) {
     filter = `ecom_employeeid eq '${code}'`;
   } else if (email) {
-    filter = `ecom_workemail eq '${email}'`;
+    filter = `tolower(ecom_workemail) eq '${email.toLowerCase()}'`;
   } else if (name) {
-    filter = `ecom_employeename eq '${name}'`;
+    filter = `contains(tolower(ecom_employeename), '${name.toLowerCase()}')`;
   } else {
     return reply.code(400).send({ message: "Setidaknya satu dari 'id', 'code', 'email', atau 'name' harus diberikan." });
   }
@@ -786,34 +789,40 @@ fastify.get("/admin/leave-requests/search", { preValidation: [fastify.authentica
     return reply.code(403).send({ message: "Admin only" });
   }
 
-  const { employeeId, email } = req.query;
+  const { employeeId, email, name } = req.query;
 
-  if (!employeeId && !email) {
-    return reply.code(400).send({ message: "Either employeeId or email must be provided." });
+  if (!employeeId && !email && !name) {
+    return reply.code(400).send({ message: "Either employeeId, email or name must be provided." });
   }
 
-  let filter;
+  let employeeFilter;
   if (employeeId) {
-    filter = `_ecom_employee_value eq ${employeeId}`;
+    employeeFilter = `_ecom_employee_value eq ${employeeId}`;
   } else {
-    // We need to get the employeeId from the email first
+    let personalInfoFilter;
+    if (email) {
+      personalInfoFilter = `tolower(ecom_workemail) eq '${email.toLowerCase()}'`;
+    } else { // name
+      personalInfoFilter = `contains(tolower(ecom_employeename), '${name.toLowerCase()}')`;
+    }
+
     try {
       const userData = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
         params: {
-          $filter: `ecom_workemail eq '${email}'`,
+          $filter: personalInfoFilter,
           $select: "_ecom_fullname_value"
         }
       });
 
       if (!userData.value || userData.value.length === 0 || !userData.value[0]._ecom_fullname_value) {
-        return reply.code(404).send({ message: `Employee not found for email ${email}` });
+        return reply.code(404).send({ message: `Employee not found for the provided criteria.` });
       }
       const foundEmployeeId = userData.value[0]._ecom_fullname_value;
-      filter = `_ecom_employee_value eq ${foundEmployeeId}`;
+      employeeFilter = `_ecom_employee_value eq ${foundEmployeeId}`;
     } catch (err) {
-      console.error("❌ Error fetching employee by email:", err.response?.data || err.message);
+      console.error("❌ Error fetching employee by email/name:", err.response?.data || err.message);
       return reply.status(500).send({
-        error: "Failed to fetch employee by email",
+        error: "Failed to fetch employee by email/name",
         details: err.response?.data?.error?.message || err.message,
       });
     }
@@ -822,7 +831,7 @@ fastify.get("/admin/leave-requests/search", { preValidation: [fastify.authentica
   try {
     const requestsData = await dataverseRequest(req, "get", "ecom_employeeleaves", {
       params: {
-        $filter: filter,
+        $filter: employeeFilter,
         $expand: "ecom_LeaveType($select=ecom_name)",
         $select: "ecom_name,ecom_startdate,ecom_enddate,ecom_numberofdays,ecom_reason,ecom_leavestatus,ecom_pmsmapprovalstatus,ecom_pmsmnote,ecom_hrapprovalstatus,ecom_hrnote",
         $orderby: "createdon desc"

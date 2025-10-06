@@ -234,7 +234,7 @@ paths:
 
   /admin/leave-requests/search:
     get:
-      summary: 'Admin: Search for employee''s leave requests'
+      summary: "Admin: Search for employee's leave requests"
       security:
         - cookieAuth: []
         - bearerAuth: []
@@ -249,6 +249,11 @@ paths:
           schema:
             type: string
           description: 'Email karyawan.'
+        - name: name
+          in: query
+          schema:
+            type: string
+          description: 'Nama karyawan.'
       responses:
         '200':
           description: Daftar permintaan cuti karyawan berhasil diambil.
