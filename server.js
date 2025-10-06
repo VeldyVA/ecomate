@@ -278,15 +278,11 @@ function isAdmin(email) {
 fastify.decorate("authenticate", async (req, reply) => {
   // Prioritaskan otentikasi via API Key (JWT) dari header
   if (req.headers.authorization) {
-    const [type, token] = req.headers.authorization.split(' ') || [];
-    if (type === 'Bearer' && token) {
-      try {
-        const decoded = fastify.jwt.verify(token);
-        req.user = decoded; // payload JWT kita berisi: { employeeId, email, role }
-        return; // Sukses, lanjut ke handler
-      } catch (err) {
-        return reply.code(401).send({ error: "Invalid API Key." });
-      }
+    try {
+      await req.jwtVerify();
+      return; // Sukses, lanjut ke handler
+    } catch (err) {
+      return reply.code(401).send({ error: "Invalid API Key." });
     }
   }
 
