@@ -228,16 +228,15 @@ async function getAppLevelDataverseToken() {
 // ==============================
 // 🔹 Helper: Request ke Dataverse (Refactored)
 // ==============================
-async function dataverseRequest(req, method, entitySet, options = {}, forceAppToken = false) {
+async function dataverseRequest(req, method, entitySet, options = {}) {
   let token;
-  // Prioritaskan token user dari session jika ada, kecuali jika dipaksa pakai token aplikasi
-  if (!forceAppToken && req.session && req.session.accessToken) {
+  // Prioritaskan token user dari session jika ada (untuk alur login via browser)
+  if (req.session && req.session.accessToken) {
     fastify.log.info("Using user-delegated token from session.");
     token = req.session.accessToken;
   } else {
-    // Jika tidak ada session atau dipaksa, gunakan token aplikasi
-    const reason = forceAppToken ? "forced" : "no user session token";
-    fastify.log.info(`Falling back to application-level token (reason: ${reason}).`);
+    // Jika tidak ada session (misal: request via API Key), gunakan token aplikasi
+    fastify.log.info("No user session token found, falling back to application-level token.");
     token = await getAppLevelDataverseToken();
   }
 
@@ -356,7 +355,7 @@ fastify.get("/admin/profile/search", { preValidation: [fastify.authenticate] }, 
           "ecom_religion", "ecom_bankname", "ecom_personalemail", "ecom_workemail"
         ].join(",")
       }
-    }, true); // Force app-level token for admin search
+    });
 
     if (!personalInfoData.value || personalInfoData.value.length === 0) {
       return reply.code(404).send({ message: "Personal information record not found for the provided criteria." });
@@ -388,7 +387,7 @@ fastify.patch("/profile/:employeeId", { preValidation: [fastify.authenticate] },
         $filter: `_ecom_fullname_value eq ${employeeId}`,
         $select: "ecom_employeepersonalinformationid"
       }
-    }, true);
+    });
 
     if (!personalInfoData.value || personalInfoData.value.length === 0) {
       return reply.code(404).send({ message: "Personal information record not found for this employee." });
@@ -414,7 +413,7 @@ fastify.patch("/profile/:employeeId", { preValidation: [fastify.authenticate] },
         return reply.code(400).send({ message: "No valid fields to update were provided." });
     }
 
-    await dataverseRequest(req, "patch", `ecom_employeepersonalinformations(${personalInfoId})`, { data: updates }, true);
+    await dataverseRequest(req, "patch", `ecom_employeepersonalinformations(${personalInfoId})`, { data: updates });
 
     return { message: "Profile updated successfully." };
 
@@ -555,7 +554,7 @@ fastify.get("/admin/leave-balance/search", { preValidation: [fastify.authenticat
           $filter: personalInfoFilter,
           $select: "_ecom_fullname_value"
         }
-      }, true);
+      });
 
       if (!userData.value || userData.value.length === 0 || !userData.value[0]._ecom_fullname_value) {
         return reply.code(404).send({ message: `Employee not found for the provided criteria.` });
@@ -578,7 +577,7 @@ fastify.get("/admin/leave-balance/search", { preValidation: [fastify.authenticat
         $expand: "ecom_LeaveType($select=ecom_leavetypeid,ecom_name,ecom_quota)",
         $select: "ecom_balance"
       }
-    }, true);
+    });
 
     if (!balanceData.value || balanceData.value.length === 0) {
       return reply.code(404).send({ message: "No leave balance records found for this employee." });
@@ -769,7 +768,7 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
         $select: "ecom_name,ecom_startdate,ecom_enddate,ecom_numberofdays,ecom_leavestatus,ecom_pmsmapprovalstatus,ecom_hrapprovalstatus",
         $orderby: "createdon desc"
       }
-    }, true);
+    });
 
     return requestsData.value || [];
 
@@ -813,7 +812,7 @@ fastify.get("/admin/leave-requests/search", { preValidation: [fastify.authentica
           $filter: personalInfoFilter,
           $select: "_ecom_fullname_value"
         }
-      }, true);
+      });
 
       if (!userData.value || userData.value.length === 0 || !userData.value[0]._ecom_fullname_value) {
         return reply.code(404).send({ message: `Employee not found for the provided criteria.` });
@@ -837,7 +836,7 @@ fastify.get("/admin/leave-requests/search", { preValidation: [fastify.authentica
         $select: "ecom_name,ecom_startdate,ecom_enddate,ecom_numberofdays,ecom_reason,ecom_leavestatus,ecom_pmsmapprovalstatus,ecom_pmsmnote,ecom_hrapprovalstatus,ecom_hrnote",
         $orderby: "createdon desc"
       }
-    }, true);
+    });
 
     return requestsData.value || [];
 
