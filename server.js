@@ -333,9 +333,9 @@ fastify.get("/admin/profile/search", { preValidation: [fastify.authenticate] }, 
   } else if (code) {
     filter = `ecom_employeeid eq '${code}'`;
   } else if (email) {
-    filter = `tolower(ecom_workemail) eq '${email.toLowerCase()}'`;
+    filter = `ecom_workemail eq '${email}'`;
   } else if (name) {
-    filter = `contains(tolower(ecom_employeename), '${name.toLowerCase()}')`;
+    filter = `ecom_employeename eq '${name}'`;
   } else {
     return reply.code(400).send({ message: "Setidaknya satu dari 'id', 'code', 'email', atau 'name' harus diberikan." });
   }
@@ -543,9 +543,9 @@ fastify.get("/admin/leave-balance/search", { preValidation: [fastify.authenticat
   } else {
     let personalInfoFilter;
     if (email) {
-      personalInfoFilter = `tolower(ecom_workemail) eq '${email.toLowerCase()}'`;
+      personalInfoFilter = `ecom_workemail eq '${email}'`;
     } else { // name
-      personalInfoFilter = `contains(tolower(ecom_employeename), '${name.toLowerCase()}')`;
+      personalInfoFilter = `ecom_employeename eq '${name}'`;
     }
 
     try {
@@ -801,9 +801,9 @@ fastify.get("/admin/leave-requests/search", { preValidation: [fastify.authentica
   } else {
     let personalInfoFilter;
     if (email) {
-      personalInfoFilter = `tolower(ecom_workemail) eq '${email.toLowerCase()}'`;
+      personalInfoFilter = `ecom_workemail eq '${email}'`;
     } else { // name
-      personalInfoFilter = `contains(tolower(ecom_employeename), '${name.toLowerCase()}')`;
+      personalInfoFilter = `ecom_employeename eq '${name}'`;
     }
 
     try {
