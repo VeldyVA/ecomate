@@ -500,7 +500,7 @@ fastify.get("/leave/balance", { preValidation: [fastify.authenticate] }, async (
   try {
     const balanceData = await dataverseRequest(req, "get", "ecom_leaveusages", {
       params: {
-        $filter: `_ecom_employee_value eq '${employeeId}'`,
+        $filter: `_ecom_employee_value eq ${employeeId}`,
         $select: "ecom_balance,_ecom_leavetype_value,ecom_name,ecom_period"
       }
     });
@@ -552,7 +552,7 @@ fastify.get("/admin/leave-balance/search", { preValidation: [fastify.authenticat
 
   let employeeFilter;
   if (employeeId) {
-    employeeFilter = `_ecom_employee_value eq '${employeeId}'`;
+    employeeFilter = `_ecom_employee_value eq ${employeeId}`;
   } else {
     let personalInfoFilter;
     if (email) {
