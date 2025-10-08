@@ -105,12 +105,17 @@ fastify.get("/auth/callback", async (req, reply) => {
     const userEmail = tokenResponse.account.username;
 
     // Dapatkan detail user dari Dataverse untuk disimpan di JWT
-    const userData = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
+    const res = await axios.get(`${dataverseBaseUrl}/api/data/v9.2/ecom_employeepersonalinformations`, {
+      headers: {
+        Authorization: `Bearer ${tokenResponse.accessToken}`,
+        Accept: "application/json"
+      },
       params: {
         $filter: `ecom_workemail eq '${userEmail}'`,
         $select: "_ecom_fullname_value"
       }
     });
+    const userData = res.data;
 
     if (!userData.value || userData.value.length === 0 || !userData.value[0]._ecom_fullname_value) {
       throw new Error(`Employee GUID (_ecom_fullname_value) not found for email ${userEmail}`);
@@ -495,20 +500,28 @@ fastify.get("/leave/balance", { preValidation: [fastify.authenticate] }, async (
   try {
     const balanceData = await dataverseRequest(req, "get", "ecom_leaveusages", {
       params: {
-        $filter: `_ecom_employee_value eq ${employeeId}`,
-        $expand: "ecom_LeaveType($select=ecom_leavetypeid,ecom_name,ecom_quota)",
-        $select: "ecom_balance"
+        $filter: `_ecom_employee_value eq '${employeeId}'`,
+        $select: "ecom_balance,_ecom_leavetype_value,ecom_name,ecom_period"
       }
     });
+
+    const leaveTypeIds = balanceData.value.map(i => i._ecom_leavetype_value);
+
+    const leaveTypePromises = leaveTypeIds.map(id =>
+      dataverseRequest(req, "get", `ecom_leavetypes(${id})`, {
+        params: { $select: "ecom_name,ecom_quota" }
+      })
+    );
+    const leaveTypes = await Promise.all(leaveTypePromises);
 
     if (!balanceData.value || balanceData.value.length === 0) {
       return reply.code(404).send({ message: "No leave balance records found for this employee." });
     }
 
-    const balances = balanceData.value.map(item => ({
-      leave_type_id: item.ecom_LeaveType.ecom_leavetypeid,
-      leave_type_name: item.ecom_LeaveType.ecom_name,
-      quota: item.ecom_LeaveType.ecom_quota,
+    const balances = balanceData.value.map((item, i) => ({
+      leave_type_id: leaveTypeIds[i],
+      leave_type_name: leaveTypes[i]?.ecom_name || "(unknown)",
+      quota: leaveTypes[i]?.ecom_quota || 0,
       balance: item.ecom_balance
     }));
 
@@ -539,7 +552,7 @@ fastify.get("/admin/leave-balance/search", { preValidation: [fastify.authenticat
 
   let employeeFilter;
   if (employeeId) {
-    employeeFilter = `_ecom_employee_value eq ${employeeId}`;
+    employeeFilter = `_ecom_employee_value eq '${employeeId}'`;
   } else {
     let personalInfoFilter;
     if (email) {
@@ -574,19 +587,27 @@ fastify.get("/admin/leave-balance/search", { preValidation: [fastify.authenticat
     const balanceData = await dataverseRequest(req, "get", "ecom_leaveusages", {
       params: {
         $filter: employeeFilter,
-        $expand: "ecom_LeaveType($select=ecom_leavetypeid,ecom_name,ecom_quota)",
-        $select: "ecom_balance"
+        $select: "ecom_balance,_ecom_leavetype_value,ecom_name,ecom_period"
       }
     });
 
+    const leaveTypeIds = balanceData.value.map(i => i._ecom_leavetype_value);
+
+    const leaveTypePromises = leaveTypeIds.map(id =>
+      dataverseRequest(req, "get", `ecom_leavetypes(${id})`, {
+        params: { $select: "ecom_name,ecom_quota" }
+      })
+    );
+    const leaveTypes = await Promise.all(leaveTypePromises);
+    
     if (!balanceData.value || balanceData.value.length === 0) {
       return reply.code(404).send({ message: "No leave balance records found for this employee." });
     }
 
-    const balances = balanceData.value.map(item => ({
-      leave_type_id: item.ecom_LeaveType.ecom_leavetypeid,
-      leave_type_name: item.ecom_LeaveType.ecom_name,
-      quota: item.ecom_LeaveType.ecom_quota,
+    const balances = balanceData.value.map((item, i) => ({
+      leave_type_id: leaveTypeIds[i],
+      leave_type_name: leaveTypes[i]?.ecom_name || "(unknown)",
+      quota: leaveTypes[i]?.ecom_quota || 0,
       balance: item.ecom_balance
     }));
 
