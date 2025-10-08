@@ -540,9 +540,9 @@ fastify.get("/leave/balance", { preValidation: [fastify.authenticate] }, async (
 // 🔹 Admin: Search for employee's leave balance
 // ==============================
 fastify.get("/admin/leave-balance/search", { preValidation: [fastify.authenticate] }, async (req, reply) => {
-  if (req.user.role !== "admin") {
-    return reply.code(403).send({ message: "Admin only" });
-  }
+  // if (req.user.role !== "admin") {
+  //   return reply.code(403).send({ message: "Admin only" });
+  // }
 
   const { employeeId, email, name } = req.query;
 
