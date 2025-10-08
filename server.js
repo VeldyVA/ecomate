@@ -562,6 +562,7 @@ fastify.get("/admin/leave-balance/search", { preValidation: [fastify.authenticat
     }
 
     try {
+      fastify.log.info(`Searching for employee with filter: ${personalInfoFilter}`);
       const userData = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
         params: {
           $filter: personalInfoFilter,
@@ -570,6 +571,7 @@ fastify.get("/admin/leave-balance/search", { preValidation: [fastify.authenticat
       });
 
       if (!userData.value || userData.value.length === 0 || !userData.value[0]._ecom_fullname_value) {
+        fastify.log.warn({ msg: "Employee lookup failed", filter: personalInfoFilter, result: userData.value });
         return reply.code(404).send({ message: `Employee not found for the provided criteria.` });
       }
       const foundEmployeeId = userData.value[0]._ecom_fullname_value;
