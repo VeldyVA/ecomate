@@ -495,15 +495,26 @@ fastify.post("/leave-preview", { preValidation: [fastify.authenticate] }, async 
 // 🔹 Cuti: Get Saldo Cuti User
 // ==============================
 fastify.get("/leave/balance", { preValidation: [fastify.authenticate] }, async (req, reply) => {
-  const employeeId = req.user.employeeId; // Diubah dari req.session.employee_id
+  const { period } = req.query;
+  if (!period) {
+    return reply.code(400).send({ message: "Parameter 'period' (tahun) wajib diisi." });
+  }
+
+  const employeeId = req.user.employeeId;
 
   try {
+    const filter = `ecom_Employee/_ecom_fullname_value eq ${employeeId} and ecom_period eq '${period}'`;
+
     const balanceData = await dataverseRequest(req, "get", "ecom_leaveusages", {
       params: {
-        $filter: `ecom_Employee/_ecom_fullname_value eq ${employeeId}`,
+        $filter: filter,
         $select: "ecom_balance,_ecom_leavetype_value,ecom_name,ecom_period"
       }
     });
+
+    if (!balanceData.value || balanceData.value.length === 0) {
+      return reply.code(404).send({ message: `No leave balance records found for this employee for the period ${period}.` });
+    }
 
     const leaveTypeIds = balanceData.value.map(i => i._ecom_leavetype_value);
 
@@ -513,10 +524,6 @@ fastify.get("/leave/balance", { preValidation: [fastify.authenticate] }, async (
       })
     );
     const leaveTypes = await Promise.all(leaveTypePromises);
-
-    if (!balanceData.value || balanceData.value.length === 0) {
-      return reply.code(404).send({ message: "No leave balance records found for this employee." });
-    }
 
     const balances = balanceData.value.map((item, i) => ({
       leave_type_id: leaveTypeIds[i],
@@ -544,7 +551,11 @@ fastify.get("/admin/leave-balance/search", { preValidation: [fastify.authenticat
     return reply.code(403).send({ message: "Admin only" });
   }
 
-  const { employeeId, email, name } = req.query;
+  const { employeeId, email, name, period } = req.query;
+
+  if (!period) {
+    return reply.code(400).send({ message: "Parameter 'period' (tahun) wajib diisi." });
+  }
 
   if (!employeeId && !email && !name) {
     return reply.code(400).send({ message: "Either employeeId, email or name must be provided." });
@@ -586,9 +597,11 @@ fastify.get("/admin/leave-balance/search", { preValidation: [fastify.authenticat
   }
 
   try {
+    const filter = `${employeeFilter} and ecom_period eq '${period}'`;
+
     const balanceData = await dataverseRequest(req, "get", "ecom_leaveusages", {
       params: {
-        $filter: employeeFilter,
+        $filter: filter,
         $select: "ecom_balance,_ecom_leavetype_value,ecom_name,ecom_period"
       }
     });
@@ -603,7 +616,7 @@ fastify.get("/admin/leave-balance/search", { preValidation: [fastify.authenticat
     const leaveTypes = await Promise.all(leaveTypePromises);
     
     if (!balanceData.value || balanceData.value.length === 0) {
-      return reply.code(404).send({ message: "No leave balance records found for this employee." });
+      return reply.code(404).send({ message: `No leave balance records found for this employee for the period ${period}.` });
     }
 
     const balances = balanceData.value.map((item, i) => ({
