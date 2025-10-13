@@ -200,6 +200,13 @@ paths:
       security:
         - cookieAuth: []
         - bearerAuth: []
+      parameters:
+        - name: period
+          in: query
+          required: true
+          schema:
+            type: string
+          description: 'Periode tahun yang ingin diperiksa (contoh: 2023).'
       # ... (sisa definisi sama)
 
   /leave/requests:
@@ -267,6 +274,12 @@ paths:
         - cookieAuth: []
         - bearerAuth: []
       parameters:
+        - name: period
+          in: query
+          required: true
+          schema:
+            type: string
+          description: 'Periode tahun yang ingin diperiksa (contoh: 2023).'
         - name: employeeId
           in: query
           schema:
