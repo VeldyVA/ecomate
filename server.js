@@ -934,7 +934,7 @@ fastify.get("/leave/history", { preValidation: [fastify.authenticate] }, async (
   const employeeId = req.user.employeeId;
 
   try {
-    const filter = `ecom_Employee/_ecom_fullname_value eq ${employeeId}`;
+    const filter = `_ecom_employee_value eq ${employeeId}`;
 
     const historyData = await dataverseRequest(req, "get", "ecom_leaves", {
       params: {
@@ -989,7 +989,7 @@ fastify.get("/admin/leave-history/search", { preValidation: [fastify.authenticat
 
   let employeeFilter;
   if (employeeId) {
-    employeeFilter = `ecom_Employee/_ecom_fullname_value eq ${employeeId}`;
+    employeeFilter = `_ecom_employee_value eq ${employeeId}`;
   } else {
     let personalInfoFilter;
     if (email) {
@@ -1012,7 +1012,7 @@ fastify.get("/admin/leave-history/search", { preValidation: [fastify.authenticat
         return reply.code(404).send({ message: `Employee not found for the provided criteria.` });
       }
       const foundEmployeeId = userData.value[0]._ecom_fullname_value;
-      employeeFilter = `ecom_Employee/_ecom_fullname_value eq ${foundEmployeeId}`;
+      employeeFilter = `_ecom_employee_value eq ${foundEmployeeId}`;
     } catch (err) {
       console.error("❌ Error fetching employee by email/name:", err.response?.data || err.message);
       return reply.status(500).send({
