@@ -74,11 +74,10 @@ fastify.get("/login", async (req, reply) => {
 });
 
 // ==============================
-// 🔹 OTP & Token In-Memory Stores
+// 🔹 OTP In-Memory Stores
 // ==============================
 const otpStore = {}; // For email-based OTPs: { email: { otp, expiresAt } }
 const tokenOtpStore = {}; // For token exchange: { otp: { jwt, expiresAt } }
-const refreshTokenStore = {}; // { [employeeId]: refreshToken }
 
 function generateOTP() {
   return Math.floor(100000 + Math.random() * 900000).toString();
@@ -129,14 +128,6 @@ fastify.get("/auth/callback", async (req, reply) => {
     req.session.employee_id = employeeId;
     req.session.email = userEmail;
     req.session.role = userRole;
-
-    // Simpan refresh token untuk penggunaan via API Key di masa mendatang
-    if (tokenResponse.refreshToken) {
-      refreshTokenStore[employeeId] = tokenResponse.refreshToken;
-      fastify.log.info(`Stored refresh token for employeeId: ${employeeId}`);
-    } else {
-      fastify.log.warn(`No refresh token received for employeeId: ${employeeId}`);
-    }
 
     // Buat JWT jangka panjang (API Key)
     const userPayload = { employeeId, email: userEmail, role: userRole };
@@ -244,50 +235,15 @@ async function getAppLevelDataverseToken() {
 // ==============================
 async function dataverseRequest(req, method, entitySet, options = {}) {
   let token;
-
-  // Path 1: User is logged in via browser (has a session)
+  // Prioritaskan token user dari session jika ada (untuk alur login via browser)
   if (req.session && req.session.accessToken) {
     fastify.log.info("Using user-delegated token from session.");
     token = req.session.accessToken;
-  }
-  // Path 2: Request is via API Key (no session, but req.user exists)
-  else if (req.user && req.user.employeeId) {
-    fastify.log.info(`API Key request for employeeId: ${req.user.employeeId}`);
-    const userRefreshToken = refreshTokenStore[req.user.employeeId];
-
-    if (userRefreshToken) {
-      fastify.log.info("Found refresh token for user. Attempting to acquire new access token.");
-      try {
-        const tokenResponse = await cca.acquireTokenByRefreshToken({
-          refreshToken: userRefreshToken,
-          scopes: [`${dataverseBaseUrl}/.default`, "offline_access"],
-        });
-        token = tokenResponse.accessToken;
-        // Update the refresh token if a new one is provided (rotation)
-        if (tokenResponse.refreshToken) {
-            refreshTokenStore[req.user.employeeId] = tokenResponse.refreshToken;
-            fastify.log.info("Stored new rotated refresh token.");
-        }
-      } catch (error) {
-        fastify.log.error("Failed to acquire token by refresh token.", error.message);
-        // If refresh token fails, it's likely expired or revoked. Clear it.
-        delete refreshTokenStore[req.user.employeeId];
-        fastify.log.warn(`Cleared invalid refresh token for employeeId: ${req.user.employeeId}`);
-        // Throw an error to be caught by the endpoint handler
-        throw new Error("Could not acquire delegated token using refresh token. Please re-authenticate by logging in via browser.");
-      }
-    } else {
-      // No refresh token found for this user, fallback to original failing behavior
-      fastify.log.warn(`No refresh token found for employeeId ${req.user.employeeId}. Falling back to app-level token.`);
-      token = await getAppLevelDataverseToken();
-    }
-  }
-  // Path 3: Fallback for any other case
-  else {
-    fastify.log.warn("No user context found. Falling back to app-level token.");
+  } else {
+    // Jika tidak ada session (misal: request via API Key), gunakan token aplikasi
+    fastify.log.info("No user session token found, falling back to application-level token.");
     token = await getAppLevelDataverseToken();
   }
-
 
   const res = await axios({
     method,
