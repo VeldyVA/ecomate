@@ -223,9 +223,11 @@ async function getAppLevelDataverseToken() {
   };
   try {
     const response = await cca.acquireTokenByClientCredential(tokenRequest);
+    fastify.log.info("Successfully acquired application-level Dataverse token.");
     return response.accessToken;
   } catch (error) {
-    fastify.log.error("Failed to acquire application-level token", error);
+    fastify.log.error("Failed to acquire application-level token", error.message);
+    fastify.log.error("Full error object:", error);
     throw new Error("Could not acquire application-level token for Dataverse.");
   }
 }
@@ -1013,16 +1015,18 @@ fastify.get("/admin/leave-history/search", { preValidation: [fastify.authenticat
       }
       const foundEmployeeId = userData.value[0]._ecom_fullname_value;
       employeeFilter = `_ecom_employeeid_value eq ${foundEmployeeId}`;
+      fastify.log.info(`Found employee ID: ${foundEmployeeId}, constructed employeeFilter: ${employeeFilter}`);
     } catch (err) {
-      console.error("❌ Error fetching employee by email/name:", err.response?.data || err.message);
-      return reply.status(500).send({
-        error: "Failed to fetch employee by email/name",
-        details: err.response?.data?.error?.message || err.message,
-      });
-    }
+      } catch (err) {
+    console.error("❌ Error fetching employee by email/name:", err.response?.data || err.message);
+    return reply.status(500).send({
+      error: "Failed to fetch employee by email/name",
+      details: err.response?.data?.error?.message || err.message,
+    });
   }
 
   try {
+    fastify.log.info(`Final employeeFilter for history search: ${employeeFilter}`);
     const historyData = await dataverseRequest(req, "get", "ecom_leaves", {
       params: {
         $filter: employeeFilter,
