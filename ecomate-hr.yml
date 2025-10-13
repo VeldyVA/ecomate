@@ -369,6 +369,52 @@ paths:
         '403':
           description: 'Akses ditolak (bukan admin).'
 
+  /admin/leave-history/search:
+    get:
+      summary: "Admin: Search for employee's non-annual leave history"
+      description: 'Mengambil riwayat penggunaan cuti non-tahunan karyawan lain berdasarkan kriteria.'
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: employeeId
+          in: query
+          schema:
+            type: string
+          description: 'GUID dari karyawan.'
+        - name: email
+          in: query
+          schema:
+            type: string
+          description: 'Email karyawan.'
+        - name: name
+          in: query
+          schema:
+            type: string
+          description: 'Nama karyawan.'
+      responses:
+        '200':
+          description: Riwayat cuti berhasil diambil.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    leave_type_name:
+                      type: string
+                    start_date:
+                      type: string
+                      format: date
+                    end_date:
+                      type: string
+                      format: date
+                    number_of_days:
+                      type: integer
+        '403':
+          description: 'Akses ditolak (bukan admin).'
+
 components:
   securitySchemes:
     cookieAuth:

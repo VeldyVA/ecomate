@@ -966,3 +966,85 @@ fastify.get("/leave/history", { preValidation: [fastify.authenticate] }, async (
     });
   }
 });
+
+
+// ==============================
+// 🔹 Admin: Search for employee's non-annual leave history
+// ==============================
+fastify.get("/admin/leave-history/search", { preValidation: [fastify.authenticate] }, async (req, reply) => {
+  if (req.user.role !== "admin") {
+    return reply.code(403).send({ message: "Admin only" });
+  }
+
+  const { employeeId, email, name } = req.query;
+
+  if (!employeeId && !email && !name) {
+    return reply.code(400).send({ message: "Either employeeId, email or name must be provided." });
+  }
+
+  let employeeFilter;
+  if (employeeId) {
+    employeeFilter = `ecom_Employee/_ecom_fullname_value eq ${employeeId}`;
+  } else {
+    let personalInfoFilter;
+    if (email) {
+      personalInfoFilter = `ecom_workemail eq '${email}'`;
+    } else { // name
+      personalInfoFilter = `ecom_employeename eq '${name}'`;
+    }
+
+    try {
+      fastify.log.info(`Searching for employee with filter: ${personalInfoFilter}`);
+      const userData = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
+        params: {
+          $filter: personalInfoFilter,
+          $select: "_ecom_fullname_value"
+        }
+      });
+
+      if (!userData.value || userData.value.length === 0 || !userData.value[0]._ecom_fullname_value) {
+        fastify.log.warn({ msg: "Employee lookup failed", filter: personalInfoFilter, result: userData.value });
+        return reply.code(404).send({ message: `Employee not found for the provided criteria.` });
+      }
+      const foundEmployeeId = userData.value[0]._ecom_fullname_value;
+      employeeFilter = `ecom_Employee/_ecom_fullname_value eq ${foundEmployeeId}`;
+    } catch (err) {
+      console.error("❌ Error fetching employee by email/name:", err.response?.data || err.message);
+      return reply.status(500).send({
+        error: "Failed to fetch employee by email/name",
+        details: err.response?.data?.error?.message || err.message,
+      });
+    }
+  }
+
+  try {
+    const historyData = await dataverseRequest(req, "get", "ecom_leaves", {
+      params: {
+        $filter: employeeFilter,
+        $expand: "ecom_leavetype($select=ecom_name)",
+        $select: "ecom_startdate,ecom_enddate,ecom_numberofdays",
+        $orderby: "createdon desc"
+      }
+    });
+
+    if (!historyData.value) {
+        return [];
+    }
+
+    const history = historyData.value.map(item => ({
+        leave_type_name: item.ecom_leavetype?.ecom_name || '(unknown)',
+        start_date: item.ecom_startdate,
+        end_date: item.ecom_enddate,
+        number_of_days: item.ecom_numberofdays
+    }));
+
+    return history;
+
+  } catch (err) {
+    console.error("❌ Error fetching leave history:", err.response?.data || err.message);
+    reply.status(500).send({
+      error: "Failed to fetch leave history",
+      details: err.response?.data?.error?.message || err.message,
+    });
+  }
+});
