@@ -1017,12 +1017,12 @@ fastify.get("/admin/leave-history/search", { preValidation: [fastify.authenticat
       employeeFilter = `_ecom_employeeid_value eq ${foundEmployeeId}`;
       fastify.log.info(`Found employee ID: ${foundEmployeeId}, constructed employeeFilter: ${employeeFilter}`);
     } catch (err) {
-      } catch (err) {
-    console.error("❌ Error fetching employee by email/name:", err.response?.data || err.message);
-    return reply.status(500).send({
-      error: "Failed to fetch employee by email/name",
-      details: err.response?.data?.error?.message || err.message,
-    });
+      console.error("❌ Error fetching employee by email/name:", err.response?.data || err.message);
+      return reply.status(500).send({
+        error: "Failed to fetch employee by email/name",
+        details: err.response?.data?.error?.message || err.message,
+      });
+    }
   }
 
   try {
