@@ -500,7 +500,7 @@ fastify.get("/leave/balance", { preValidation: [fastify.authenticate] }, async (
   try {
     const balanceData = await dataverseRequest(req, "get", "ecom_leaveusages", {
       params: {
-        $filter: `ecom_Employee/employeeid eq ${employeeId}`,
+        $filter: `_ecom_employee_value eq ${employeeId}`,
         $select: "ecom_balance,_ecom_leavetype_value,ecom_name,ecom_period"
       }
     });
@@ -552,7 +552,7 @@ fastify.get("/admin/leave-balance/search", { preValidation: [fastify.authenticat
 
   let employeeFilter;
   if (employeeId) {
-    employeeFilter = `ecom_Employee/employeeid eq ${employeeId}`;
+    employeeFilter = `_ecom_employee_value eq ${employeeId}`;
   } else {
     let personalInfoFilter;
     if (email) {
@@ -575,7 +575,7 @@ fastify.get("/admin/leave-balance/search", { preValidation: [fastify.authenticat
         return reply.code(404).send({ message: `Employee not found for the provided criteria.` });
       }
       const foundEmployeeId = userData.value[0]._ecom_fullname_value;
-      employeeFilter = `ecom_Employee/employeeid eq ${foundEmployeeId}`;
+      employeeFilter = `_ecom_employee_value eq ${foundEmployeeId}`;
     } catch (err) {
       console.error("❌ Error fetching employee by email/name:", err.response?.data || err.message);
       return reply.status(500).send({
