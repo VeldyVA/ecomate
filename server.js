@@ -213,42 +213,19 @@ fastify.post("/exchange-otp", async (req, reply) => {
 // ==============================
 let appTokenCache = {
   token: null,
-  expiresOn: 0, // Unix timestamp in seconds
+  expiresOn: 0
 };
 
 async function getAppLevelDataverseToken() {
-  const nowInSeconds = Math.floor(Date.now() / 1000);
-
-  // Check if token exists and is valid for at least 5 more minutes
-  if (appTokenCache.token && appTokenCache.expiresOn > nowInSeconds + 300) {
-    fastify.log.info("Returning cached application-level Dataverse token.");
-    return appTokenCache.token;
-  }
-
   fastify.log.info("Acquiring new application-level Dataverse token...");
   const tokenRequest = {
     scopes: [`${dataverseBaseUrl}/.default`],
   };
-
   try {
     const response = await cca.acquireTokenByClientCredential(tokenRequest);
-
-    if (!response || !response.accessToken || !response.expiresOn) {
-      fastify.log.error("Invalid token response from MSAL", response);
-      throw new Error("Received invalid token response from authentication service.");
-    }
-
-    appTokenCache.token = response.accessToken;
-    appTokenCache.expiresOn = response.expiresOn; // This is a Unix timestamp (seconds)
-    fastify.log.info(`New app token acquired, expires on: ${new Date(response.expiresOn * 1000).toISOString()}`);
-
     return response.accessToken;
-
   } catch (error) {
     fastify.log.error("Failed to acquire application-level token", error);
-    // Reset cache on failure
-    appTokenCache.token = null;
-    appTokenCache.expiresOn = 0;
     throw new Error("Could not acquire application-level token for Dataverse.");
   }
 }
