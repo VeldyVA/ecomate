@@ -928,3 +928,41 @@ fastify.get("/profile/personal-info", { preValidation: [fastify.authenticate] },
     });
   }
 });
+
+
+fastify.get("/leave/history", { preValidation: [fastify.authenticate] }, async (req, reply) => {
+  const employeeId = req.user.employeeId;
+
+  try {
+    const filter = `ecom_Employee/_ecom_fullname_value eq ${employeeId}`;
+
+    const historyData = await dataverseRequest(req, "get", "ecom_leaves", {
+      params: {
+        $filter: filter,
+        $expand: "ecom_leavetype($select=ecom_name)",
+        $select: "ecom_startdate,ecom_enddate,ecom_numberofdays",
+        $orderby: "createdon desc"
+      }
+    });
+
+    if (!historyData.value) {
+        return [];
+    }
+
+    const history = historyData.value.map(item => ({
+        leave_type_name: item.ecom_leavetype?.ecom_name || '(unknown)',
+        start_date: item.ecom_startdate,
+        end_date: item.ecom_enddate,
+        number_of_days: item.ecom_numberofdays
+    }));
+
+    return history;
+
+  } catch (err) {
+    console.error("❌ Error fetching leave history:", err.response?.data || err.message);
+    reply.status(500).send({
+      error: "Failed to fetch leave history",
+      details: err.response?.data?.error?.message || err.message,
+    });
+  }
+});

@@ -229,6 +229,36 @@ paths:
                       type: string
                       format: date-time
 
+  /leave/history:
+    get:
+      summary: Get User's Non-Annual Leave History
+      description: 'Mengambil riwayat penggunaan cuti non-tahunan (contoh: Cuti Haji, Cuti Melahirkan) dari tabel ecom_leave.'
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Riwayat cuti berhasil diambil.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    leave_type_name:
+                      type: string
+                    start_date:
+                      type: string
+                      format: date
+                    end_date:
+                      type: string
+                      format: date
+                    number_of_days:
+                      type: integer
+        '500':
+          description: Gagal mengambil data.
+
   /leave/requests:
     get:
       summary: "Get User's Leave Requests"
