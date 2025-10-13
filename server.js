@@ -508,7 +508,7 @@ fastify.get("/leave/balance", { preValidation: [fastify.authenticate] }, async (
     const balanceData = await dataverseRequest(req, "get", "ecom_leaveusages", {
       params: {
         $filter: filter,
-        $select: "ecom_balance,_ecom_leavetype_value,ecom_name,ecom_period"
+        $select: "ecom_balance,_ecom_leavetype_value,ecom_name,ecom_period,ecom_enddate"
       }
     });
 
@@ -529,7 +529,8 @@ fastify.get("/leave/balance", { preValidation: [fastify.authenticate] }, async (
       leave_type_id: leaveTypeIds[i],
       leave_type_name: leaveTypes[i]?.ecom_name || "(unknown)",
       quota: leaveTypes[i]?.ecom_quota || 0,
-      balance: item.ecom_balance
+      balance: item.ecom_balance,
+      end_date: item.ecom_enddate
     }));
 
     return balances;
@@ -602,7 +603,7 @@ fastify.get("/admin/leave-balance/search", { preValidation: [fastify.authenticat
     const balanceData = await dataverseRequest(req, "get", "ecom_leaveusages", {
       params: {
         $filter: filter,
-        $select: "ecom_balance,_ecom_leavetype_value,ecom_name,ecom_period"
+        $select: "ecom_balance,_ecom_leavetype_value,ecom_name,ecom_period,ecom_enddate"
       }
     });
 
@@ -623,7 +624,8 @@ fastify.get("/admin/leave-balance/search", { preValidation: [fastify.authenticat
       leave_type_id: leaveTypeIds[i],
       leave_type_name: leaveTypes[i]?.ecom_name || "(unknown)",
       quota: leaveTypes[i]?.ecom_quota || 0,
-      balance: item.ecom_balance
+      balance: item.ecom_balance,
+      end_date: item.ecom_enddate
     }));
 
     return balances;

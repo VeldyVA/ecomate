@@ -207,7 +207,27 @@ paths:
           schema:
             type: string
           description: 'Periode tahun yang ingin diperiksa (contoh: 2023).'
-      # ... (sisa definisi sama)
+      responses:
+        '200':
+          description: Saldo cuti berhasil diambil.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    leave_type_id:
+                      type: string
+                    leave_type_name:
+                      type: string
+                    quota:
+                      type: integer
+                    balance:
+                      type: integer
+                    end_date:
+                      type: string
+                      format: date-time
 
   /leave/requests:
     get:
@@ -298,6 +318,24 @@ paths:
       responses:
         '200':
           description: Daftar saldo cuti karyawan berhasil diambil.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    leave_type_id:
+                      type: string
+                    leave_type_name:
+                      type: string
+                    quota:
+                      type: integer
+                    balance:
+                      type: integer
+                    end_date:
+                      type: string
+                      format: date-time
         '403':
           description: 'Akses ditolak (bukan admin).'
 
