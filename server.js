@@ -936,7 +936,7 @@ fastify.get("/leave/history", { preValidation: [fastify.authenticate] }, async (
   const employeeId = req.user.employeeId;
 
   try {
-    const filter = `_ecom_employeeid_value eq ${employeeId}`;
+    const filter = `_ecom_employeeid_value eq '${employeeId}'`;
 
     const historyData = await dataverseRequest(req, "get", "ecom_leaves", {
       params: {
@@ -989,56 +989,50 @@ fastify.get("/admin/leave-history/search", { preValidation: [fastify.authenticat
     return reply.code(400).send({ message: "Either employeeId, email or name must be provided." });
   }
 
-  let employeeFilter;
-  if (employeeId) {
-    employeeFilter = `_ecom_employeeid_value eq ${employeeId}`;
-  } else {
-    let personalInfoFilter;
-    if (email) {
-      personalInfoFilter = `ecom_workemail eq '${email}'`;
-    } else { // name
-      personalInfoFilter = `ecom_employeename eq '${name}'`;
-    }
+  try {
+    let resolvedEmployeeId;
 
-    try {
-      fastify.log.info(`Searching for employee with filter: ${personalInfoFilter}`);
-      const userData = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
+    if (employeeId) {
+      resolvedEmployeeId = employeeId;
+    } else {
+      // Build filter for personal info lookup
+      let personalInfoFilter;
+      if (email) {
+        personalInfoFilter = `ecom_workemail eq '${email}'`;
+      } else {
+        personalInfoFilter = `ecom_employeename eq '${name}'`;
+      }
+
+      // Lookup personal info
+      const personalInfoResult = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
         params: {
           $filter: personalInfoFilter,
-          $select: "_ecom_fullname_value"
+          $select: "_ecom_employeeid_value"
         }
       });
 
-      if (!userData.value || userData.value.length === 0 || !userData.value[0]._ecom_fullname_value) {
-        fastify.log.warn({ msg: "Employee lookup failed", filter: personalInfoFilter, result: userData.value });
+      if (!personalInfoResult.value || personalInfoResult.value.length === 0 || !personalInfoResult.value[0]._ecom_employeeid_value) {
+        fastify.log.warn({ msg: "Employee lookup failed", filter: personalInfoFilter, result: personalInfoResult.value });
         return reply.code(404).send({ message: `Employee not found for the provided criteria.` });
       }
-      const foundEmployeeId = userData.value[0]._ecom_fullname_value;
-      employeeFilter = `_ecom_employeeid_value eq ${foundEmployeeId}`;
-      fastify.log.info(`Found employee ID: ${foundEmployeeId}, constructed employeeFilter: ${employeeFilter}`);
-    } catch (err) {
-      console.error("❌ Error fetching employee by email/name:", err.response?.data || err.message);
-      return reply.status(500).send({
-        error: "Failed to fetch employee by email/name",
-        details: err.response?.data?.error?.message || err.message,
-      });
-    }
-  }
 
-  try {
-    fastify.log.info(`Final employeeFilter for history search: ${employeeFilter}`);
+      resolvedEmployeeId = personalInfoResult.value[0]._ecom_employeeid_value;
+      fastify.log.info(`Resolved employeeId: ${resolvedEmployeeId}`);
+    }
+
+    // Fetch leave history
     const historyData = await dataverseRequest(req, "get", "ecom_leaves", {
       params: {
-        $filter: employeeFilter,
-        $select: "ecom_startdate,ecom_enddate,ecom_numberofdays,_ecom_leavetype_value",
-        $orderby: "createdon desc"
+        $filter: `_ecom_employeeid_value eq '${resolvedEmployeeId}'`,
+        $select: "ecom_startdate,ecom_enddate,ecom_numberofdays,_ecom_leavetype_value"
       }
     });
 
     if (!historyData.value || historyData.value.length === 0) {
-        return [];
+      return reply.send([]);
     }
 
+    // Fetch leave type names
     const leaveTypeIds = historyData.value.map(i => i._ecom_leavetype_value);
     const leaveTypePromises = leaveTypeIds.map(id =>
       id ? dataverseRequest(req, "get", `ecom_leavetypes(${id})`, { params: { $select: "ecom_name" } }) : Promise.resolve(null)
@@ -1046,17 +1040,17 @@ fastify.get("/admin/leave-history/search", { preValidation: [fastify.authenticat
     const leaveTypes = await Promise.all(leaveTypePromises);
 
     const history = historyData.value.map((item, i) => ({
-        leave_type_name: leaveTypes[i]?.ecom_name || '(unknown)',
-        start_date: item.ecom_startdate,
-        end_date: item.ecom_enddate,
-        number_of_days: item.ecom_numberofdays
+      leave_type_name: leaveTypes[i]?.ecom_name || '(unknown)',
+      start_date: item.ecom_startdate,
+      end_date: item.ecom_enddate,
+      number_of_days: item.ecom_numberofdays
     }));
 
-    return history;
+    return reply.send(history);
 
   } catch (err) {
     console.error("❌ Error fetching leave history:", err.response?.data || err.message);
-    reply.status(500).send({
+    return reply.status(500).send({
       error: "Failed to fetch leave history",
       details: err.response?.data?.error?.message || err.message,
     });
