@@ -939,7 +939,7 @@ fastify.get("/leave/history", { preValidation: [fastify.authenticate] }, async (
     const personalInfoId = req.user.employeeId;
 
     // 🔹 Ambil employee ID
-    const personalInfoData = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
+    const personalInfoData = await dataverseRequest(req, "get", "ecom_personalinformations", {
       params: {
         $filter: `ecom_personalinformationid eq '${personalInfoId}'`,
         $select: "ecom_personalinformationid,ecom_workemail,ecom_employeename"
@@ -966,26 +966,20 @@ fastify.get("/leave/history", { preValidation: [fastify.authenticate] }, async (
     const historyData = await dataverseRequest(req, "get", "ecom_leaves", {
       params: {
         $filter: filter,
-        $select: "ecom_name,ecom_startdate,ecom_enddate,ecom_numberofdays,ecom_status",
+        $select: "ecom_startdate,ecom_enddate,ecom_numberofdays",
         $expand: "ecom_LeaveType($select=ecom_name)"
       }
     });
 
     const data = historyData.value?.map((item) => ({
-      leaveName: item.ecom_name,
       leaveType: item.ecom_LeaveType?.ecom_name || null,
       startDate: item.ecom_startdate,
       endDate: item.ecom_enddate,
-      numberOfDays: item.ecom_numberofdays,
-      status: item.ecom_status
+      numberOfDays: item.ecom_numberofdays
     })) || [];
 
-    return reply.code(200).send({
-      message: "Leave history retrieved successfully",
-      filtersUsed: { year, type },
-      totalRecords: data.length,
-      data
-    });
+    return reply.send(history);
+    
   } catch (error) {
     fastify.log.error(error);
     return reply.code(500).send({ message: "Failed to retrieve leave history", error: error.message });
