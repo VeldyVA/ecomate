@@ -1041,7 +1041,7 @@ fastify.get("/admin/leave-history/search", { preValidation: [fastify.authenticat
       params: {
         $filter: `_ecom_employeeid_value eq '${resolvedEmployeeId}'`,
         $select: "ecom_startdate,ecom_enddate,ecom_numberofdays",
-        $expand: "ecom_leavetype($select=ecom_name)"
+        $expand: "ecom_LeaveType($select=ecom_name)"
       }
     });
 
