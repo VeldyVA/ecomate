@@ -931,68 +931,62 @@ fastify.get("/profile/personal-info", { preValidation: [fastify.authenticate] },
   }
 });
 
-
+// 🔹 User: Get own non-annual leave history
+// ==============================
 fastify.get("/leave/history", { preValidation: [fastify.authenticate] }, async (req, reply) => {
-  const personalInfoId = req.user.employeeId; // This is the GUID of the personal information record
-
   try {
-    // 1. Get the actual employee GUID from ecom_employeepersonalinformations
+    const personalInfoId = req.user.employeeId; // GUID dari personal information record
+
+    // 1️⃣ Ambil employee record ID dari tabel ecom_employeepersonalinformations
     const personalInfoData = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
       params: {
         $filter: `ecom_employeepersonalinformationid eq '${personalInfoId}'`,
-        $select: "_ecom_fullname_value" // Select _ecom_fullname_value
+        $select: "_ecom_fullname_value"
       }
     });
 
-    if (!personalInfoData.value || personalInfoData.value.length === 0 || !personalInfoData.value[0]._ecom_fullname_value) {
+    if (!personalInfoData.value?.length || !personalInfoData.value[0]._ecom_fullname_value) {
       fastify.log.warn(`Employee lookup failed for personalInfoId: ${personalInfoId}`);
       return reply.code(404).send({ message: `Employee record not found for your personal information.` });
     }
 
-    const employeeId = personalInfoData.value[0]._ecom_fullname_value; // This is the GUID of the employee record
+    const employeeId = personalInfoData.value[0]._ecom_fullname_value; // GUID dari employee record
+    fastify.log.info(`Resolved employeeId for user: ${employeeId}`);
 
-    // 2. Use the employeeId to fetch leave history
-    const filter = `_ecom_employeeid_value eq '${employeeId}'`; // Add single quotes here
-
+    // 2️⃣ Ambil riwayat cuti user dari ecom_leaves dengan expand ecom_LeaveType
     const historyData = await dataverseRequest(req, "get", "ecom_leaves", {
       params: {
-        $filter: filter,
-        $select: "ecom_startdate,ecom_enddate,ecom_numberofdays,_ecom_leavetype_value",
-        $orderby: "createdon desc"
+        $filter: `_ecom_employeeid_value eq '${employeeId}'`,
+        $select: "ecom_startdate,ecom_enddate,ecom_numberofdays",
+        $expand: "ecom_LeaveType($select=ecom_name)"
       }
     });
 
-    if (!historyData.value || historyData.value.length === 0) {
-        return [];
+    if (!historyData.value?.length) {
+      return reply.send([]);
     }
 
-    const leaveTypeIds = historyData.value.map(i => i._ecom_leavetype_value);
-    const leaveTypePromises = leaveTypeIds.map(id =>
-      id ? dataverseRequest(req, "get", `ecom_leavetypes(${id})`, { params: { $select: "ecom_name" } }) : Promise.resolve(null)
-    );
-    const leaveTypes = await Promise.all(leaveTypePromises);
-
-    const history = historyData.value.map((item, i) => ({
-        leave_type_name: leaveTypes[i]?.ecom_name || '(unknown)',
-        start_date: item.ecom_startdate,
-        end_date: item.ecom_enddate,
-        number_of_days: item.ecom_numberofdays
+    // 3️⃣ Format hasil agar rapi
+    const history = historyData.value.map(item => ({
+      leave_type_name: item.ecom_LeaveType?.ecom_name || "(unknown)",
+      start_date: item.ecom_startdate,
+      end_date: item.ecom_enddate,
+      number_of_days: item.ecom_numberofdays
     }));
 
-    return history;
+    return reply.send(history);
 
   } catch (err) {
-    console.error("❌ Error fetching leave history:", err.response?.data || err.message);
-    reply.status(500).send({
+    console.error("❌ Error fetching user leave history:", err.response?.data || err.message);
+    return reply.status(500).send({
       error: "Failed to fetch leave history",
       details: err.response?.data?.error?.message || err.message,
     });
   }
 });
 
-
 // ==============================
-// 🔹 Admin: Search for employee's non-annual leave history
+// // 🔹 Admin: Search for employee's non-annual leave history
 // ==============================
 fastify.get("/admin/leave-history/search", { preValidation: [fastify.authenticate] }, async (req, reply) => {
   if (req.user.role !== "admin") {
@@ -1008,10 +1002,11 @@ fastify.get("/admin/leave-history/search", { preValidation: [fastify.authenticat
   try {
     let resolvedEmployeeId;
 
+    // 🔸 Langsung pakai employeeId kalau sudah dikirim
     if (employeeId) {
       resolvedEmployeeId = employeeId;
     } else {
-      // Build filter for personal info lookup
+      // 🔸 Build filter untuk cari di ecom_personalinformation
       let personalInfoFilter;
       if (email) {
         personalInfoFilter = `ecom_workemail eq '${email}'`;
@@ -1019,39 +1014,39 @@ fastify.get("/admin/leave-history/search", { preValidation: [fastify.authenticat
         personalInfoFilter = `ecom_employeename eq '${name}'`;
       }
 
-      // Lookup personal info
-      const personalInfoResult = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
+      // 🔸 Lookup personal info (ambil GUID dari ecom_personalinformation)
+      const personalInfoResult = await dataverseRequest(req, "get", "ecom_personalinformations", {
         params: {
           $filter: personalInfoFilter,
-          $select: "_ecom_fullname_value"
+          $select: "ecom_personalinformationid,ecom_workemail,ecom_employeename"
         }
       });
 
-      if (!personalInfoResult.value || personalInfoResult.value.length === 0 || !personalInfoResult.value[0]._ecom_fullname_value) {
-        fastify.log.warn({ msg: "Employee lookup failed", filter: personalInfoFilter, result: personalInfoResult.value });
+      if (!personalInfoResult.value?.length) {
+        fastify.log.warn({ msg: "Employee lookup failed", filter: personalInfoFilter });
         return reply.code(404).send({ message: `Employee not found for the provided criteria.` });
       }
 
-      resolvedEmployeeId = personalInfoResult.value[0]._ecom_fullname_value;
-      fastify.log.info(`Resolved employeeId: ${resolvedEmployeeId}`);
+      resolvedEmployeeId = personalInfoResult.value[0].ecom_personalinformationid;
+      fastify.log.info(`✅ Resolved employee personal information ID: ${resolvedEmployeeId}`);
     }
 
-    // Fetch leave history
+    // 🔸 Fetch leave history by resolved employee GUID
     const historyData = await dataverseRequest(req, "get", "ecom_leaves", {
       params: {
-        $filter: `_ecom_employeeid_value eq '${resolvedEmployeeId}'`,
+        $filter: `_ecom_employeeid_value eq ${resolvedEmployeeId}`,
         $select: "ecom_startdate,ecom_enddate,ecom_numberofdays",
         $expand: "ecom_LeaveType($select=ecom_name)"
       }
     });
 
-    if (!historyData.value || historyData.value.length === 0) {
+    if (!historyData.value?.length) {
       return reply.send([]);
     }
 
-    // Transform result
+    // 🔸 Transform hasil
     const history = historyData.value.map(item => ({
-      leave_type_name: item.ecom_leavetype?.ecom_name || "(unknown)",
+      leave_type_name: item.ecom_LeaveType?.ecom_name || "(unknown)",
       start_date: item.ecom_startdate,
       end_date: item.ecom_enddate,
       number_of_days: item.ecom_numberofdays
@@ -1060,7 +1055,7 @@ fastify.get("/admin/leave-history/search", { preValidation: [fastify.authenticat
     return reply.send(history);
 
   } catch (err) {
-    console.error("❌ Error fetching leave history:", err.response?.data || err.message);
+    fastify.log.error("❌ Error fetching leave history:", err.response?.data || err.message);
     return reply.status(500).send({
       error: "Failed to fetch leave history",
       details: err.response?.data?.error?.message || err.message,
