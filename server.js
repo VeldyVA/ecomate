@@ -964,7 +964,7 @@ fastify.get("/leave/history", { preValidation: [fastify.authenticate] }, async (
       numberOfDays: item.ecom_numberofdays
     })) || [];
 
-    return reply.send(history);
+    return reply.send(data);
     
   } catch (error) {
     fastify.log.error(error);
