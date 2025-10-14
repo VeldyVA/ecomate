@@ -1040,7 +1040,8 @@ fastify.get("/admin/leave-history/search", { preValidation: [fastify.authenticat
     const historyData = await dataverseRequest(req, "get", "ecom_leaves", {
       params: {
         $filter: `_ecom_employeeid_value eq '${resolvedEmployeeId}'`,
-        $select: "ecom_startdate,ecom_enddate,ecom_numberofdays,_ecom_leavetype_value"
+        $select: "ecom_startdate,ecom_enddate,ecom_numberofdays",
+        $expand: "ecom_leavetype($select=ecom_name)"
       }
     });
 
@@ -1048,15 +1049,9 @@ fastify.get("/admin/leave-history/search", { preValidation: [fastify.authenticat
       return reply.send([]);
     }
 
-    // Fetch leave type names
-    const leaveTypeIds = historyData.value.map(i => i._ecom_leavetype_value);
-    const leaveTypePromises = leaveTypeIds.map(id =>
-      id ? dataverseRequest(req, "get", `ecom_leavetypes(${id})`, { params: { $select: "ecom_name" } }) : Promise.resolve(null)
-    );
-    const leaveTypes = await Promise.all(leaveTypePromises);
-
-    const history = historyData.value.map((item, i) => ({
-      leave_type_name: leaveTypes[i]?.ecom_name || '(unknown)',
+    // Transform result
+    const history = historyData.value.map(item => ({
+      leave_type_name: item.ecom_leavetype?.ecom_name || "(unknown)",
       start_date: item.ecom_startdate,
       end_date: item.ecom_enddate,
       number_of_days: item.ecom_numberofdays
