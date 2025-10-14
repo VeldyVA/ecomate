@@ -933,10 +933,26 @@ fastify.get("/profile/personal-info", { preValidation: [fastify.authenticate] },
 
 
 fastify.get("/leave/history", { preValidation: [fastify.authenticate] }, async (req, reply) => {
-  const employeeId = req.user.employeeId;
+  const personalInfoId = req.user.employeeId; // This is the GUID of the personal information record
 
   try {
-    const filter = `_ecom_employeeid_value eq '${employeeId}'`;
+    // 1. Get the actual employee GUID from ecom_employeepersonalinformations
+    const personalInfoData = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
+      params: {
+        $filter: `ecom_employeepersonalinformationid eq '${personalInfoId}'`,
+        $select: "_ecom_fullname_value" // Select _ecom_fullname_value
+      }
+    });
+
+    if (!personalInfoData.value || personalInfoData.value.length === 0 || !personalInfoData.value[0]._ecom_fullname_value) {
+      fastify.log.warn(`Employee lookup failed for personalInfoId: ${personalInfoId}`);
+      return reply.code(404).send({ message: `Employee record not found for your personal information.` });
+    }
+
+    const employeeId = personalInfoData.value[0]._ecom_fullname_value; // This is the GUID of the employee record
+
+    // 2. Use the employeeId to fetch leave history
+    const filter = `_ecom_employeeid_value eq '${employeeId}'`; // Add single quotes here
 
     const historyData = await dataverseRequest(req, "get", "ecom_leaves", {
       params: {
@@ -1007,16 +1023,16 @@ fastify.get("/admin/leave-history/search", { preValidation: [fastify.authenticat
       const personalInfoResult = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
         params: {
           $filter: personalInfoFilter,
-          $select: "_ecom_employeeid_value"
+          $select: "_ecom_fullname_value"
         }
       });
 
-      if (!personalInfoResult.value || personalInfoResult.value.length === 0 || !personalInfoResult.value[0]._ecom_employeeid_value) {
+      if (!personalInfoResult.value || personalInfoResult.value.length === 0 || !personalInfoResult.value[0]._ecom_fullname_value) {
         fastify.log.warn({ msg: "Employee lookup failed", filter: personalInfoFilter, result: personalInfoResult.value });
         return reply.code(404).send({ message: `Employee not found for the provided criteria.` });
       }
 
-      resolvedEmployeeId = personalInfoResult.value[0]._ecom_employeeid_value;
+      resolvedEmployeeId = personalInfoResult.value[0]._ecom_fullname_value;
       fastify.log.info(`Resolved employeeId: ${resolvedEmployeeId}`);
     }
 
