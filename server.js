@@ -936,21 +936,7 @@ fastify.get("/profile/personal-info", { preValidation: [fastify.authenticate] },
 fastify.get("/leave/history", { preValidation: [fastify.authenticate] }, async (req, reply) => {
   try {
     const { year, type } = req.query;
-    const personalInfoId = req.user.employeeId;
-
-    // 🔹 Ambil employee ID
-    const personalInfoData = await dataverseRequest(req, "get", "ecom_personalinformations", {
-      params: {
-        $filter: `ecom_personalinformationid eq '${personalInfoId}'`,
-        $select: "ecom_personalinformationid,ecom_workemail,ecom_employeename"
-      }
-    });
-
-    if (!personalInfoData.value?.length) {
-      return reply.code(404).send({ message: "Personal information not found for this user." });
-    }
-
-    const employeeId = personalInfoData.value[0].ecom_employeename;
+    const employeeId = req.user.employeeId; // This is already the GUID
 
     // 🔹 Bangun filter dinamis
     let filter = `_ecom_employeeid_value eq '${employeeId}'`;
