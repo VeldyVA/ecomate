@@ -236,26 +236,55 @@ paths:
       security:
         - cookieAuth: []
         - bearerAuth: []
+      parameters:
+        - name: year
+          in: query
+          schema:
+            type: string
+          description: 'Tahun untuk memfilter riwayat cuti (contoh: 2023).'
+        - name: type
+          in: query
+          schema:
+            type: string
+          description: 'Nama jenis cuti untuk memfilter (contoh: Cuti Sakit).'
       responses:
         '200':
           description: Riwayat cuti berhasil diambil.
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  type: object
-                  properties:
-                    leave_type_name:
-                      type: string
-                    start_date:
-                      type: string
-                      format: date
-                    end_date:
-                      type: string
-                      format: date
-                    number_of_days:
-                      type: integer
+                type: object
+                properties:
+                  message:
+                    type: string
+                  filtersUsed:
+                    type: object
+                    properties:
+                      year:
+                        type: string
+                      type:
+                        type: string
+                  totalRecords:
+                    type: integer
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        leaveName:
+                          type: string
+                        leaveType:
+                          type: string
+                        startDate:
+                          type: string
+                          format: date
+                        endDate:
+                          type: string
+                          format: date
+                        numberOfDays:
+                          type: integer
+                        status:
+                          type: integer
         '500':
           description: Gagal mengambil data.
 
@@ -392,6 +421,16 @@ paths:
           schema:
             type: string
           description: 'Nama karyawan.'
+        - name: year
+          in: query
+          schema:
+            type: string
+          description: 'Tahun untuk memfilter riwayat cuti (contoh: 2023).'
+        - name: type
+          in: query
+          schema:
+            type: string
+          description: 'Nama jenis cuti untuk memfilter (contoh: Cuti Sakit).'
       responses:
         '200':
           description: Riwayat cuti berhasil diambil.
