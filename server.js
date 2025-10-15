@@ -749,12 +749,28 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
   }
 
   try {
-    // 3. Ambil saldo (DIPERBAIKI: Menggunakan filter & query terpisah yang benar)
+    // 3. Ambil saldo (DIPERBAIKI: Mencari ID karyawan yang tepat terlebih dahulu)
     const leaveYear = start.getUTCFullYear().toString();
-    // Gunakan filter kompleks dari GET /leave/balance yang terbukti benar
-    const filter = `ecom_Employee/_ecom_fullname_value eq ${employeeId} and _ecom_leavetype_value eq ${leaveTypeId} and ecom_period eq '${leaveYear}'`;
 
-    fastify.log.info({ reqId: req.id, msg: "Fetching leave balance with filter", filter });
+    // Langkah 3a: Dapatkan ID karyawan utama dari ID personal information
+    // Ini diperlukan karena tabel leaveusages menggunakan GUID dari tabel employee, bukan personalinformation
+    const personalInfoId = req.user.employeeId; // Ini adalah GUID dari ecom_employeepersonalinformations
+    const employeeData = await dataverseRequest(req, "get", "employees", {
+        params: {
+            $filter: `_ecom_fullname_value eq ${personalInfoId}`,
+            $select: "employeeid"
+        }
+    });
+
+    if (!employeeData.value || employeeData.value.length === 0) {
+        return reply.code(404).send({ message: "Could not find main employee record linked to your user profile." });
+    }
+    const mainEmployeeId = employeeData.value[0].employeeid;
+
+    // Langkah 3b: Gunakan ID karyawan utama untuk mencari saldo cuti
+    const filter = `_ecom_employee_value eq ${mainEmployeeId} and _ecom_leavetype_value eq ${leaveTypeId} and ecom_period eq '${leaveYear}'`;
+
+    fastify.log.info({ reqId: req.id, msg: "Fetching leave balance with main employee ID", filter });
 
     const balanceData = await dataverseRequest(req, "get", "ecom_leaveusages", {
       params: { $filter: filter, $select: "ecom_balance,_ecom_leavetype_value" }
@@ -767,7 +783,7 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
       return reply.code(404).send({ message: errorMessage });
     }
 
-    // Ambil detail Tipe Cuti secara terpisah untuk menghindari query kompleks
+    // Ambil detail Tipe Cuti secara terpisah
     const leaveTypeData = await dataverseRequest(req, "get", `ecom_leavetypes(${leaveTypeId})`, {
         params: { $select: "ecom_name" }
     });
