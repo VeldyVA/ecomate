@@ -755,7 +755,7 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
     // Langkah 3a: Dapatkan ID karyawan utama dari ID personal information
     // Ini diperlukan karena tabel leaveusages menggunakan GUID dari tabel employee, bukan personalinformation
     const personalInfoId = req.user.employeeId; // Ini adalah GUID dari ecom_employeepersonalinformations
-    const employeeData = await dataverseRequest(req, "get", "employees", {
+    const employeeData = await dataverseRequest(req, "get", "ecom_employees", {
         params: {
             $filter: `_ecom_fullname_value eq ${personalInfoId}`,
             $select: "employeeid"
