@@ -749,16 +749,11 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
   }
 
   try {
-    // 3. Ambil saldo (DIPERBAIKI: Menggunakan pendekatan "Split Filter")
+    // 3. Ambil saldo
     const leaveYear = start.getUTCFullYear().toString();
+    const employeeIdFromJwt = req.user.employeeId; // This is the GUID from _ecom_fullname_value
 
-    // Langkah 3a sudah tidak diperlukan, ID karyawan sudah ada di req.user.employeeId
-    const personalInfoId = req.user.employeeId;
-
-    // Langkah 3b: Query Dataverse untuk semua saldo cuti karyawan untuk tahun ini
-    // Menggunakan filter yang terbukti bekerja di GET /leave/balance
-    const initialFilter = `ecom_Employee/_ecom_fullname_value eq ${personalInfoId} and ecom_period eq '${leaveYear}'`;
-
+    const initialFilter = `ecom_Employee/_ecom_fullname_value eq ${employeeIdFromJwt} and ecom_period eq '${leaveYear}'`;
     fastify.log.info({ reqId: req.id, msg: "Fetching all leave balances for employee and year", filter: initialFilter });
 
     const allBalancesData = await dataverseRequest(req, "get", "ecom_leaveusages", {
@@ -766,43 +761,44 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
     });
 
     if (!allBalancesData.value || allBalancesData.value.length === 0) {
-      const errorMessage = `No leave balance records found for the year ${leaveYear}.`;
-      fastify.log.warn({ reqId: req.id, error: errorMessage, year: leaveYear });
-      return reply.code(404).send({ message: errorMessage });
+      return reply.code(404).send({ message: `No leave balance records found for the year ${leaveYear}.` });
     }
 
-    // Langkah 3c: Filter hasil di sisi server untuk menemukan jenis cuti yang spesifik
     const usage = allBalancesData.value.find(item => item._ecom_leavetype_value === leaveTypeId);
-
     if (!usage) {
-      const errorMessage = `No leave balance record found for the specified leave type for the year ${leaveYear}.`;
-      fastify.log.warn({ reqId: req.id, error: errorMessage, leaveTypeId, year: leaveYear });
-      return reply.code(404).send({ message: errorMessage });
+      return reply.code(404).send({ message: `No leave balance record found for the specified leave type for the year ${leaveYear}.` });
     }
 
-    // Ambil detail Tipe Cuti secara terpisah (tetap sama)
     const leaveTypeData = await dataverseRequest(req, "get", `ecom_leavetypes(${leaveTypeId})`, {
         params: { $select: "ecom_name" }
     });
-
     const currentBalance = usage.ecom_balance;
     const leaveTypeName = leaveTypeData?.ecom_name || "Unknown Leave";
 
-    // 4. Validasi saldo cuti
+    // 4. Validasi saldo
     if (currentBalance < days) {
-      const errorMessage = `Insufficient leave balance for '${leaveTypeName}'. Available: ${currentBalance}, Requested: ${days}.`;
-      fastify.log.warn({ reqId: req.id, error: errorMessage, currentBalance, requestedDays: days });
-      return reply.code(400).send({ 
-        message: errorMessage 
-      });
+      return reply.code(400).send({ message: `Insufficient leave balance for '${leaveTypeName}'. Available: ${currentBalance}, Requested: ${days}.` });
     }
 
-    // 5. Hitung tanggal selesai & buat request
+    // 5. Dapatkan ID personal information untuk binding
+    const personalInfoResponse = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
+        params: {
+            $filter: `ecom_workemail eq '${req.user.email}'`,
+            $select: "ecom_employeepersonalinformationid"
+        }
+    });
+
+    if (!personalInfoResponse.value || personalInfoResponse.value.length === 0) {
+        return reply.code(404).send({ message: "Could not find your personal information record to create the leave request." });
+    }
+    const personalInfoId = personalInfoResponse.value[0].ecom_employeepersonalinformationid;
+
+    // 6. Hitung tanggal selesai & buat request
     const endDate = calculateEndDate(startDate, days);
-    const leaveRequestName = `Leave Request - ${employeeId} - ${startDate}`;
+    const leaveRequestName = `Leave Request - ${req.user.email} - ${startDate}`;
 
     const newLeaveRequest = {
-      "ecom_Employee@odata.bind": `/ecom_employees(${employeeId})`,
+      "ecom_Employee@odata.bind": `/ecom_employeepersonalinformations(${personalInfoId})`,
       "ecom_LeaveType@odata.bind": `/ecom_leavetypes(${leaveTypeId})`,
       ecom_name: leaveRequestName,
       ecom_startdate: startDate,
