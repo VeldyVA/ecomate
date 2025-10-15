@@ -749,12 +749,11 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
   }
 
   try {
-    // 3. Ambil saldo (DIPERBAIKI: Mencari ID karyawan yang tepat terlebih dahulu)
+    // 3. Ambil saldo (DIPERBAIKI: Menggunakan pendekatan "Split Filter")
     const leaveYear = start.getUTCFullYear().toString();
 
-    // Langkah 3a: Dapatkan ID karyawan utama dari ID personal information
-    // Ini diperlukan karena tabel leaveusages menggunakan GUID dari tabel employee, bukan personalinformation
-    const personalInfoId = req.user.employeeId; // Ini adalah GUID dari ecom_employeepersonalinformations
+    // Langkah 3a: Dapatkan ID karyawan utama dari ID personal information (tetap sama)
+    const personalInfoId = req.user.employeeId;
     const employeeData = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
         params: {
             $filter: `_ecom_fullname_value eq ${personalInfoId}`,
@@ -765,25 +764,37 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
     if (!employeeData.value || employeeData.value.length === 0) {
         return reply.code(404).send({ message: "Could not find main employee record linked to your user profile." });
     }
-    const mainEmployeeId = employeeData.value[0].employeeid;
+    const mainEmployeeId = employeeData.value[0].ecom_employeeid;
+    if (!mainEmployeeId) {
+        return reply.code(404).send({ message: "Main employee ID (ecom_employeeid) not found for your user profile. Please ensure your profile has a valid employee ID." });
+    }
 
-    // Langkah 3b: Gunakan ID karyawan utama untuk mencari saldo cuti
-    const filter = `_ecom_employee_value eq ${mainEmployeeId} and _ecom_leavetype_value eq ${leaveTypeId} and ecom_period eq '${leaveYear}'`;
+    // Langkah 3b: Query Dataverse untuk semua saldo cuti karyawan untuk tahun ini
+    // Menggunakan filter yang terbukti bekerja di GET /leave/balance
+    const initialFilter = `ecom_Employee/_ecom_fullname_value eq ${personalInfoId} and ecom_period eq '${leaveYear}'`;
 
-    fastify.log.info({ reqId: req.id, msg: "Fetching leave balance with main employee ID", filter });
+    fastify.log.info({ reqId: req.id, msg: "Fetching all leave balances for employee and year", filter: initialFilter });
 
-    const balanceData = await dataverseRequest(req, "get", "ecom_leaveusages", {
-      params: { $filter: filter, $select: "ecom_balance,_ecom_leavetype_value" }
+    const allBalancesData = await dataverseRequest(req, "get", "ecom_leaveusages", {
+      params: { $filter: initialFilter, $select: "ecom_balance,_ecom_leavetype_value" }
     });
 
-    const usage = balanceData.value?.[0];
+    if (!allBalancesData.value || allBalancesData.value.length === 0) {
+      const errorMessage = `No leave balance records found for the year ${leaveYear}.`;
+      fastify.log.warn({ reqId: req.id, error: errorMessage, year: leaveYear });
+      return reply.code(404).send({ message: errorMessage });
+    }
+
+    // Langkah 3c: Filter hasil di sisi server untuk menemukan jenis cuti yang spesifik
+    const usage = allBalancesData.value.find(item => item._ecom_leavetype_value === leaveTypeId);
+
     if (!usage) {
       const errorMessage = `No leave balance record found for the specified leave type for the year ${leaveYear}.`;
       fastify.log.warn({ reqId: req.id, error: errorMessage, leaveTypeId, year: leaveYear });
       return reply.code(404).send({ message: errorMessage });
     }
 
-    // Ambil detail Tipe Cuti secara terpisah
+    // Ambil detail Tipe Cuti secara terpisah (tetap sama)
     const leaveTypeData = await dataverseRequest(req, "get", `ecom_leavetypes(${leaveTypeId})`, {
         params: { $select: "ecom_name" }
     });
