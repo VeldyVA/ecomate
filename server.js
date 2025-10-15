@@ -765,7 +765,7 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
     const personalInfoId = personalInfoResponse.value[0].ecom_employeepersonalinformationid;
 
     // 2. Ambil Saldo Cuti menggunakan personalInfoId
-    const balanceFilter = `_ecom_employee_value eq ${personalInfoId} and ecom_period eq '${leaveYear}'`;
+    const balanceFilter = `ecom_Employee/ecom_employeepersonalinformationid eq ${personalInfoId} and ecom_period eq '${leaveYear}'`;
     fastify.log.info({ reqId: req.id, msg: "Fetching all leave balances for employee and year", filter: balanceFilter });
 
     const allBalancesData = await dataverseRequest(req, "get", "ecom_leaveusages", {
