@@ -749,18 +749,15 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
   }
 
   try {
-    // 3. Ambil saldo dan detail jenis cuti (DIPERBAIKI: dengan filter tahun)
+    // 3. Ambil saldo (DIPERBAIKI: Query disederhanakan untuk menghindari error OData)
     const leaveYear = start.getUTCFullYear().toString();
-    const filter = `ecom_Employee/_ecom_fullname_value eq ${employeeId} and _ecom_leavetype_value eq ${leaveTypeId} and ecom_period eq '${leaveYear}'`;
+    // Gunakan filter sederhana yang terbukti jalan, dengan tambahan filter tahun
+    const filter = `_ecom_employee_value eq ${employeeId} and _ecom_leavetype_value eq ${leaveTypeId} and ecom_period eq '${leaveYear}'`;
 
     fastify.log.info({ reqId: req.id, msg: "Fetching leave balance with filter", filter });
 
     const balanceData = await dataverseRequest(req, "get", "ecom_leaveusages", {
-      params: {
-        $filter: filter,
-        $select: "ecom_balance",
-        $expand: "ecom_LeaveType($select=ecom_name,ecom_quota)"
-      }
+      params: { $filter: filter, $select: "ecom_balance,_ecom_leavetype_value" }
     });
 
     const usage = balanceData.value?.[0];
@@ -770,8 +767,13 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
       return reply.code(404).send({ message: errorMessage });
     }
 
+    // Ambil detail Tipe Cuti secara terpisah
+    const leaveTypeData = await dataverseRequest(req, "get", `ecom_leavetypes(${leaveTypeId})`, {
+        params: { $select: "ecom_name" }
+    });
+
     const currentBalance = usage.ecom_balance;
-    const leaveTypeName = usage.ecom_LeaveType?.ecom_name || "Unknown Leave";
+    const leaveTypeName = leaveTypeData?.ecom_name || "Unknown Leave";
 
     // 4. Validasi saldo cuti
     if (currentBalance < days) {
