@@ -802,7 +802,7 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
     const leaveRequestName = `Leave Request - ${employeeId} - ${startDate}`;
 
     const newLeaveRequest = {
-      "ecom_employee@odata.bind": `/ecom_employees(${employeeId})`,
+      "ecom_Employee@odata.bind": `/ecom_employees(${employeeId})`,
       "ecom_LeaveType@odata.bind": `/ecom_leavetypes(${leaveTypeId})`,
       ecom_name: leaveRequestName,
       ecom_startdate: startDate,
