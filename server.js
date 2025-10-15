@@ -749,10 +749,10 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
   }
 
   try {
-    // 3. Ambil saldo (DIPERBAIKI: Query disederhanakan untuk menghindari error OData)
+    // 3. Ambil saldo (DIPERBAIKI: Menggunakan filter & query terpisah yang benar)
     const leaveYear = start.getUTCFullYear().toString();
-    // Gunakan filter sederhana yang terbukti jalan, dengan tambahan filter tahun
-    const filter = `_ecom_employee_value eq ${employeeId} and _ecom_leavetype_value eq ${leaveTypeId} and ecom_period eq '${leaveYear}'`;
+    // Gunakan filter kompleks dari GET /leave/balance yang terbukti benar
+    const filter = `ecom_Employee/_ecom_fullname_value eq ${employeeId} and _ecom_leavetype_value eq ${leaveTypeId} and ecom_period eq '${leaveYear}'`;
 
     fastify.log.info({ reqId: req.id, msg: "Fetching leave balance with filter", filter });
 
@@ -767,7 +767,7 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
       return reply.code(404).send({ message: errorMessage });
     }
 
-    // Ambil detail Tipe Cuti secara terpisah
+    // Ambil detail Tipe Cuti secara terpisah untuk menghindari query kompleks
     const leaveTypeData = await dataverseRequest(req, "get", `ecom_leavetypes(${leaveTypeId})`, {
         params: { $select: "ecom_name" }
     });
