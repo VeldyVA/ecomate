@@ -708,7 +708,8 @@ fastify.get("/leave/requests", { preValidation: [fastify.authenticate] }, async 
 // 🔹 Cuti: Apply for Leave (Refactored)
 // ==============================
 fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async (req, reply) => {
-  const { leaveTypeId, startDate, days, reason } = req.body;
+  // Match incoming snake_case from client and rename to camelCase for internal use
+  const { leave_typeid: leaveTypeId, start_date: startDate, days, reason } = req.body;
   const employeeId = req.user.employeeId;
 
   // 1. Validasi input dasar
