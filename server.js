@@ -725,8 +725,9 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
   }
 
   // 2. Validasi tanggal mulai
+  let start;
   try {
-    const start = parseDateUTC(startDate);
+    start = parseDateUTC(startDate);
     const today = new Date();
     today.setUTCHours(0, 0, 0, 0);
 
@@ -736,7 +737,8 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
       return reply.code(400).send({ message: errorMessage });
     }
     if (!isWorkday(start)) {
-      const errorMessage = "Start date must be a working day (not a weekend or public holiday)."
+      const dayOfWeek = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][start.getUTCDay()];
+      const errorMessage = `Start date ${startDate} is a ${dayOfWeek}, which is not a working day.`
       fastify.log.warn({ reqId: req.id, error: errorMessage, startDate });
       return reply.code(400).send({ message: errorMessage });
     }
@@ -747,10 +749,15 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
   }
 
   try {
-    // 3. Ambil saldo dan detail jenis cuti
+    // 3. Ambil saldo dan detail jenis cuti (DIPERBAIKI: dengan filter tahun)
+    const leaveYear = start.getUTCFullYear().toString();
+    const filter = `_ecom_employee_value eq ${employeeId} and _ecom_leavetype_value eq ${leaveTypeId} and ecom_period eq '${leaveYear}'`;
+
+    fastify.log.info({ reqId: req.id, msg: "Fetching leave balance with filter", filter });
+
     const balanceData = await dataverseRequest(req, "get", "ecom_leaveusages", {
       params: {
-        $filter: `_ecom_employee_value eq ${employeeId} and _ecom_leavetype_value eq ${leaveTypeId}`,
+        $filter: filter,
         $select: "ecom_balance",
         $expand: "ecom_LeaveType($select=ecom_name,ecom_quota)"
       }
@@ -758,8 +765,8 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
 
     const usage = balanceData.value?.[0];
     if (!usage) {
-      const errorMessage = `No leave balance record found for the specified leave type.`;
-      fastify.log.warn({ reqId: req.id, error: errorMessage, leaveTypeId });
+      const errorMessage = `No leave balance record found for the specified leave type for the year ${leaveYear}.`;
+      fastify.log.warn({ reqId: req.id, error: errorMessage, leaveTypeId, year: leaveYear });
       return reply.code(404).send({ message: errorMessage });
     }
 
