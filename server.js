@@ -451,8 +451,24 @@ fastify.get("/healthz", async (req, reply) => {
 });
 
 // ==============================
-// 🔹 Leave Helper
+// 🔹 Leave Helper (Refactored)
 // ==============================
+
+// Daftar hari libur nasional (dapat diperbarui atau dipindahkan ke database)
+// Format: YYYY-MM-DD
+const PUBLIC_HOLIDAYS = new Set([
+  "2024-01-01", "2024-02-08", "2024-02-09", "2024-02-10", "2024-03-11", 
+  "2024-03-12", "2024-03-29", "2024-03-31", "2024-04-08", "2024-04-09", 
+  "2024-04-10", "2024-04-11", "2024-04-12", "2024-04-15", "2024-05-01", 
+  "2024-05-09", "2024-05-10", "2024-05-23", "2024-05-24", "2024-06-01", 
+  "2024-06-17", "2024-06-18", "2024-07-07", "2024-08-17", "2024-09-16", 
+  "2024-12-25", "2024-12-26",
+  // 2025 (contoh)
+  "2025-01-01", "2025-01-29", "2025-03-03", "2025-03-21", "2025-03-31",
+  "2025-04-01", "2025-04-18", "2025-05-01", "2025-05-12", "2025-05-29",
+  "2025-06-01", "2025-06-06", "2025-08-17", "2025-09-05", "2025-12-25"
+]);
+
 function parseDateUTC(str) {
   const [y, m, d] = str.split("-").map(Number);
   return new Date(Date.UTC(y, m - 1, d));
@@ -460,38 +476,35 @@ function parseDateUTC(str) {
 
 function formatDateUTC(date) {
   const pad = n => (n < 10 ? "0" + n : n);
-  return `${date.getUTCFullYear()}-${pad(date.getUTCMonth()+1)}-${pad(date.getUTCDate())}`;
+  return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`;
+}
+
+function isWorkday(date) {
+  const dow = date.getUTCDay();
+  const dateStr = formatDateUTC(date);
+  // Bukan Sabtu (6) atau Minggu (0) dan tidak ada di daftar hari libur
+  return dow !== 0 && dow !== 6 && !PUBLIC_HOLIDAYS.has(dateStr);
 }
 
 function calculateEndDate(startDateStr, days) {
   const start = parseDateUTC(startDateStr);
-  let workDays = 0;
+  let workDaysCounted = 0;
   const current = new Date(start);
-  while (workDays < days) {
-    const dow = current.getUTCDay();
-    if (dow !== 0 && dow !== 6) workDays++;
-    if (workDays < days) current.setUTCDate(current.getUTCDate() + 1);
+
+  // Jika hari pertama adalah hari kerja, hitung sebagai hari pertama
+  if (isWorkday(current)) {
+    workDaysCounted = 1;
+  }
+
+  // Cari sisa hari cuti
+  while (workDaysCounted < days) {
+    current.setUTCDate(current.getUTCDate() + 1);
+    if (isWorkday(current)) {
+      workDaysCounted++;
+    }
   }
   return formatDateUTC(current);
 }
-
-// ==============================
-// 🔹 Leave Preview
-// ==============================
-fastify.post("/leave-preview", { preValidation: [fastify.authenticate] }, async (req, reply) => {
-  const { start_date, days } = req.body;
-  if (!start_date || !days) return reply.code(400).send({ message: "start_date & days required" });
-
-  const start = parseDateUTC(start_date);
-  const dow = start.getUTCDay();
-  if (dow === 0 || dow === 6) return reply.code(400).send({ message: "Start date cannot fall on Saturday or Sunday" });
-
-  const today = new Date(); today.setUTCHours(0,0,0,0);
-  if (start < today) return reply.code(400).send({ message: "Start date cannot be in the past" });
-
-  const end_date = calculateEndDate(start_date, days);
-  return { start_date, end_date, days, message: "Preview calculated successfully" };
-});
 
 // ==============================
 // 🔹 Cuti: Get Saldo Cuti User
@@ -692,34 +705,62 @@ fastify.get("/leave/requests", { preValidation: [fastify.authenticate] }, async 
 });
 
 // ==============================
-// 🔹 Cuti: Apply for Leave
+// 🔹 Cuti: Apply for Leave (Refactored)
 // ==============================
 fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async (req, reply) => {
   const { leaveTypeId, startDate, days, reason } = req.body;
-  const employeeId = req.user.employeeId; // Diubah dari req.session.employee_id
+  const employeeId = req.user.employeeId;
 
+  // 1. Validasi input dasar
   if (!leaveTypeId || !startDate || !days) {
     return reply.code(400).send({ message: "leaveTypeId, startDate, and days are required." });
   }
+  if (!Number.isInteger(days) || days <= 0) {
+    return reply.code(400).send({ message: "'days' must be a positive integer." });
+  }
+
+  // 2. Validasi tanggal mulai
+  try {
+    const start = parseDateUTC(startDate);
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+
+    if (start < today) {
+      return reply.code(400).send({ message: "Start date cannot be in the past." });
+    }
+    if (!isWorkday(start)) {
+      return reply.code(400).send({ message: "Start date must be a working day (not a weekend or public holiday)." });
+    }
+  } catch (e) {
+    return reply.code(400).send({ message: "Invalid startDate format. Use YYYY-MM-DD." });
+  }
 
   try {
+    // 3. Ambil saldo dan detail jenis cuti
     const balanceData = await dataverseRequest(req, "get", "ecom_leaveusages", {
       params: {
         $filter: `_ecom_employee_value eq ${employeeId} and _ecom_leavetype_value eq ${leaveTypeId}`,
-        $select: "ecom_balance"
+        $select: "ecom_balance",
+        $expand: "ecom_LeaveType($select=ecom_name,ecom_quota)"
       }
     });
 
-    const currentBalance = balanceData.value?.[0]?.ecom_balance;
-
-    if (currentBalance === undefined) {
-      return reply.code(404).send({ message: `No leave balance found for leave type ${leaveTypeId}.` });
+    const usage = balanceData.value?.[0];
+    if (!usage) {
+      return reply.code(404).send({ message: `No leave balance record found for the specified leave type.` });
     }
 
+    const currentBalance = usage.ecom_balance;
+    const leaveTypeName = usage.ecom_LeaveType?.ecom_name || "Unknown Leave";
+
+    // 4. Validasi saldo cuti
     if (currentBalance < days) {
-      return reply.code(400).send({ message: `Insufficient leave balance. Available: ${currentBalance}, Requested: ${days}.` });
+      return reply.code(400).send({ 
+        message: `Insufficient leave balance for '${leaveTypeName}'. Available: ${currentBalance}, Requested: ${days}.` 
+      });
     }
 
+    // 5. Hitung tanggal selesai & buat request
     const endDate = calculateEndDate(startDate, days);
     const leaveRequestName = `Leave Request - ${employeeId} - ${startDate}`;
 
@@ -731,12 +772,12 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
       ecom_enddate: endDate,
       ecom_numberofdays: days,
       ecom_reason: reason || null,
-      ecom_leavestatus: 1, 
-      ecom_pmsmapprovalstatus: 1,
-      ecom_hrapprovalstatus: 1
+      ecom_leavestatus: 1, // Pending
+      ecom_pmsmapprovalstatus: 1, // Pending
+      ecom_hrapprovalstatus: 1 // Pending
     };
 
-    const inserted = await dataverseRequest("post", "ecom_employeeleaves", { data: newLeaveRequest });
+    const inserted = await dataverseRequest(req, "post", "ecom_employeeleaves", { data: newLeaveRequest });
 
     return reply.code(201).send({ 
       message: "Leave request submitted successfully.", 
