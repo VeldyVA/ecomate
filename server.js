@@ -713,10 +713,14 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
 
   // 1. Validasi input dasar
   if (!leaveTypeId || !startDate || !days) {
-    return reply.code(400).send({ message: "leaveTypeId, startDate, and days are required." });
+    const errorMessage = "leaveTypeId, startDate, and days are required.";
+    fastify.log.warn({ reqId: req.id, error: errorMessage, body: req.body });
+    return reply.code(400).send({ message: errorMessage });
   }
   if (!Number.isInteger(days) || days <= 0) {
-    return reply.code(400).send({ message: "'days' must be a positive integer." });
+    const errorMessage = "'days' must be a positive integer.";
+    fastify.log.warn({ reqId: req.id, error: errorMessage, days });
+    return reply.code(400).send({ message: errorMessage });
   }
 
   // 2. Validasi tanggal mulai
@@ -726,13 +730,19 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
     today.setUTCHours(0, 0, 0, 0);
 
     if (start < today) {
-      return reply.code(400).send({ message: "Start date cannot be in the past." });
+      const errorMessage = "Start date cannot be in the past.";
+      fastify.log.warn({ reqId: req.id, error: errorMessage, startDate });
+      return reply.code(400).send({ message: errorMessage });
     }
     if (!isWorkday(start)) {
-      return reply.code(400).send({ message: "Start date must be a working day (not a weekend or public holiday)." });
+      const errorMessage = "Start date must be a working day (not a weekend or public holiday)."
+      fastify.log.warn({ reqId: req.id, error: errorMessage, startDate });
+      return reply.code(400).send({ message: errorMessage });
     }
   } catch (e) {
-    return reply.code(400).send({ message: "Invalid startDate format. Use YYYY-MM-DD." });
+    const errorMessage = "Invalid startDate format. Use YYYY-MM-DD.";
+    fastify.log.warn({ reqId: req.id, error: errorMessage, startDate });
+    return reply.code(400).send({ message: errorMessage });
   }
 
   try {
@@ -747,7 +757,9 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
 
     const usage = balanceData.value?.[0];
     if (!usage) {
-      return reply.code(404).send({ message: `No leave balance record found for the specified leave type.` });
+      const errorMessage = `No leave balance record found for the specified leave type.`;
+      fastify.log.warn({ reqId: req.id, error: errorMessage, leaveTypeId });
+      return reply.code(404).send({ message: errorMessage });
     }
 
     const currentBalance = usage.ecom_balance;
@@ -755,8 +767,10 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
 
     // 4. Validasi saldo cuti
     if (currentBalance < days) {
+      const errorMessage = `Insufficient leave balance for '${leaveTypeName}'. Available: ${currentBalance}, Requested: ${days}.`;
+      fastify.log.warn({ reqId: req.id, error: errorMessage, currentBalance, requestedDays: days });
       return reply.code(400).send({ 
-        message: `Insufficient leave balance for '${leaveTypeName}'. Available: ${currentBalance}, Requested: ${days}.` 
+        message: errorMessage 
       });
     }
 
