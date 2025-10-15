@@ -751,7 +751,7 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
   try {
     // 3. Ambil saldo dan detail jenis cuti (DIPERBAIKI: dengan filter tahun)
     const leaveYear = start.getUTCFullYear().toString();
-    const filter = `_ecom_employee_value eq ${employeeId} and _ecom_leavetype_value eq ${leaveTypeId} and ecom_period eq '${leaveYear}'`;
+    const filter = `ecom_Employee/_ecom_fullname_value eq ${employeeId} and _ecom_leavetype_value eq ${leaveTypeId} and ecom_period eq '${leaveYear}'`;
 
     fastify.log.info({ reqId: req.id, msg: "Fetching leave balance with filter", filter });
 
