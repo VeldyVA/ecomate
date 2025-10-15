@@ -794,41 +794,68 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
 });
 
 // ==============================
-// 🔹 Cuti: Cancel a Leave Request
+// 🔹 Cuti: Cancel a Leave Request (Refactored with Retry)
 // ==============================
 fastify.post("/leave/requests/:leaveId/cancel", { preValidation: [fastify.authenticate] }, async (req, reply) => {
   const { leaveId } = req.params;
-  const employeeId = req.user.employeeId; // Diubah
+  const employeeId = req.user.employeeId;
+
+  const MAX_RETRIES = 3;
+  const RETRY_DELAY_MS = 500;
+  let leaveRequest = null;
+
+  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      fastify.log.info(`[Attempt ${attempt}/${MAX_RETRIES}] Fetching leave request ${leaveId} for cancellation.`);
+      leaveRequest = await dataverseRequest(req, "get", `ecom_employeeleaves(${leaveId})`, {
+        params: { $select: "ecom_leavestatus,_ecom_employee_value" }
+      });
+      if (leaveRequest) break; // Success, exit loop
+    } catch (err) {
+      if (err.response && err.response.status === 404 && attempt < MAX_RETRIES) {
+        fastify.log.warn(`Leave request ${leaveId} not found. Retrying in ${RETRY_DELAY_MS}ms...`);
+        await sleep(RETRY_DELAY_MS);
+      } else {
+        // For non-404 errors or on the last attempt, fail permanently
+        fastify.log.error(`❌ Failed to fetch leave request ${leaveId}:`, err.response?.data || err.message);
+        const statusCode = err.response?.status === 404 ? 404 : 500;
+        const message = err.response?.status === 404 ? `Leave request with ID ${leaveId} not found.` : "Failed to cancel leave request";
+        return reply.code(statusCode).send({ 
+          error: message,
+          details: err.response?.data?.error?.message || err.message 
+        });
+      }
+    }
+  }
 
   try {
-    const leaveRequest = await dataverseRequest(req, "get", `ecom_employeeleaves(${leaveId})`, {
-      params: {
-        $select: "ecom_leavestatus,_ecom_employee_value"
-      }
-    });
-
+    // Validasi kepemilikan (kecuali untuk admin)
     if (req.user.role !== 'admin' && leaveRequest._ecom_employee_value !== employeeId) {
       return reply.code(403).send({ message: "You can only cancel your own leave requests." });
     }
 
-    if (leaveRequest.ecom_leavestatus !== 1) {
-      return reply.code(400).send({ message: "Only requests with 'Pending' status can be cancelled." });
+    // Validasi status (hanya yang pending yang bisa dibatalkan)
+    if (leaveRequest.ecom_leavestatus !== 1) { // 1 = Pending
+      return reply.code(400).send({ message: `Only requests with 'Pending' status can be cancelled. Current status: ${leaveRequest.ecom_leavestatus}` });
     }
 
     const updates = {
-      statecode: 1, 
-      statuscode: 2, 
-      ecom_leavestatus: 3
+      statecode: 1,       // Deactivate the record
+      statuscode: 2,      // Inactive
+      ecom_leavestatus: 3 // 3 = Cancelled
     };
 
     await dataverseRequest("patch", `ecom_employeeleaves(${leaveId})`, { data: updates });
 
+    fastify.log.info(`Leave request ${leaveId} has been cancelled successfully.`);
     return { message: `Leave request ${leaveId} has been cancelled.` };
 
   } catch (err) {
-    console.error("❌ Error cancelling leave request:", err.response?.data || err.message);
+    fastify.log.error("❌ Error during leave cancellation logic (validation/update):", err.response?.data || err.message);
     reply.status(500).send({
-      error: "Failed to cancel leave request",
+      error: "An unexpected error occurred during the cancellation process.",
       details: err.response?.data?.error?.message || err.message,
     });
   }
