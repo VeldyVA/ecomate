@@ -507,70 +507,46 @@ function calculateEndDate(startDateStr, days) {
 }
 
 // ==============================
-// 🔹 Cuti: Shared Logic & Endpoints (Refactored)
+// 🔹 Cuti: Get Saldo Cuti User
 // ==============================
-
-// Shared function to get leave balances for a user
-async function getLeaveBalances(req, employeeId, period) {
-  // This filter is the one that works in the original GET /leave/balance endpoint.
-  // We use it here to ensure consistency, but it may fail if there's a data integrity issue.
-  const filter = `ecom_Employee/_ecom_fullname_value eq ${employeeId} and ecom_period eq '${period}'`;
-  fastify.log.info({ reqId: req.id, msg: "Getting leave balances with consistent filter", filter });
-
-  const balanceData = await dataverseRequest(req, "get", "ecom_leaveusages", {
-    params: {
-      $filter: filter,
-      $select: "ecom_balance,_ecom_leavetype_value,ecom_name,ecom_period,ecom_enddate"
-    }
-  });
-
-  if (!balanceData.value || balanceData.value.length === 0) {
-    return []; // Return empty array if no records found
-  }
-
-  const leaveTypeIds = balanceData.value.map(i => i._ecom_leavetype_value).filter(id => id);
-
-  const leaveTypePromises = leaveTypeIds.map(id =>
-    dataverseRequest(req, "get", `ecom_leavetypes(${id})`, {
-      params: { $select: "ecom_name,ecom_quota" }
-    })
-  );
-  const leaveTypes = await Promise.all(leaveTypePromises);
-
-  const leaveTypesMap = leaveTypes.reduce((map, type, i) => {
-      if (leaveTypeIds[i]) {
-        map[leaveTypeIds[i]] = type;
-      }
-      return map;
-  }, {});
-
-  const balances = balanceData.value.map(item => {
-    const leaveType = leaveTypesMap[item._ecom_leavetype_value];
-    return {
-      leave_type_id: item._ecom_leavetype_value,
-      leave_type_name: leaveType?.ecom_name || "(unknown)",
-      quota: leaveType?.ecom_quota || 0,
-      balance: item.ecom_balance,
-      end_date: item.ecom_enddate
-    };
-  });
-
-  return balances;
-}
-
-// Cuti: Get Saldo Cuti User (Refactored)
 fastify.get("/leave/balance", { preValidation: [fastify.authenticate] }, async (req, reply) => {
   const { period } = req.query;
   if (!period) {
     return reply.code(400).send({ message: "Parameter 'period' (tahun) wajib diisi." });
   }
 
-  try {
-    const balances = await getLeaveBalances(req, req.user.employeeId, period);
+  const employeeId = req.user.employeeId;
 
-    if (balances.length === 0) {
+  try {
+    const filter = `ecom_Employee/_ecom_fullname_value eq ${employeeId} and ecom_period eq '${period}'`;
+
+    const balanceData = await dataverseRequest(req, "get", "ecom_leaveusages", {
+      params: {
+        $filter: filter,
+        $select: "ecom_balance,_ecom_leavetype_value,ecom_name,ecom_period,ecom_enddate"
+      }
+    });
+
+    if (!balanceData.value || balanceData.value.length === 0) {
       return reply.code(404).send({ message: `No leave balance records found for this employee for the period ${period}.` });
     }
+
+    const leaveTypeIds = balanceData.value.map(i => i._ecom_leavetype_value);
+
+    const leaveTypePromises = leaveTypeIds.map(id =>
+      dataverseRequest(req, "get", `ecom_leavetypes(${id})`, {
+        params: { $select: "ecom_name,ecom_quota" }
+      })
+    );
+    const leaveTypes = await Promise.all(leaveTypePromises);
+
+    const balances = balanceData.value.map((item, i) => ({
+      leave_type_id: leaveTypeIds[i],
+      leave_type_name: leaveTypes[i]?.ecom_name || "(unknown)",
+      quota: leaveTypes[i]?.ecom_quota || 0,
+      balance: item.ecom_balance,
+      end_date: item.ecom_enddate
+    }));
 
     return balances;
 
@@ -584,7 +560,7 @@ fastify.get("/leave/balance", { preValidation: [fastify.authenticate] }, async (
 });
 
 // ==============================
-// 🔹 Admin: Search for employee's leave balance (Refactored)
+// 🔹 Admin: Search for employee's leave balance
 // ==============================
 fastify.get("/admin/leave-balance/search", { preValidation: [fastify.authenticate] }, async (req, reply) => {
   if (req.user.role !== "admin") {
@@ -601,19 +577,19 @@ fastify.get("/admin/leave-balance/search", { preValidation: [fastify.authenticat
     return reply.code(400).send({ message: "Either employeeId, email or name must be provided." });
   }
 
-  try {
-    let targetEmployeeId;
+  let employeeFilter;
+  if (employeeId) {
+    employeeFilter = `ecom_Employee/_ecom_fullname_value eq ${employeeId}`;
+  } else {
+    let personalInfoFilter;
+    if (email) {
+      personalInfoFilter = `ecom_workemail eq '${email}'`;
+    } else { // name
+      personalInfoFilter = `ecom_employeename eq '${name}'`;
+    }
 
-    if (employeeId) {
-      targetEmployeeId = employeeId;
-    } else {
-      let personalInfoFilter;
-      if (email) {
-        personalInfoFilter = `ecom_workemail eq '${email}'`;
-      } else { // name
-        personalInfoFilter = `ecom_employeename eq '${name}'`;
-      }
-
+    try {
+      fastify.log.info(`Searching for employee with filter: ${personalInfoFilter}`);
       const userData = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
         params: {
           $filter: personalInfoFilter,
@@ -622,22 +598,55 @@ fastify.get("/admin/leave-balance/search", { preValidation: [fastify.authenticat
       });
 
       if (!userData.value || userData.value.length === 0 || !userData.value[0]._ecom_fullname_value) {
+        fastify.log.warn({ msg: "Employee lookup failed", filter: personalInfoFilter, result: userData.value });
         return reply.code(404).send({ message: `Employee not found for the provided criteria.` });
       }
-      targetEmployeeId = userData.value[0]._ecom_fullname_value;
+      const foundEmployeeId = userData.value[0]._ecom_fullname_value;
+      employeeFilter = `ecom_Employee/_ecom_fullname_value eq ${foundEmployeeId}`;
+    } catch (err) {
+      console.error("❌ Error fetching employee by email/name:", err.response?.data || err.message);
+      return reply.status(500).send({
+        error: "Failed to fetch employee by email/name",
+        details: err.response?.data?.error?.message || err.message,
+      });
     }
+  }
 
-    // Admin search now also uses the shared function
-    const balances = await getLeaveBalances(req, targetEmployeeId, period);
+  try {
+    const filter = `${employeeFilter} and ecom_period eq '${period}'`;
 
-    if (balances.length === 0) {
+    const balanceData = await dataverseRequest(req, "get", "ecom_leaveusages", {
+      params: {
+        $filter: filter,
+        $select: "ecom_balance,_ecom_leavetype_value,ecom_name,ecom_period,ecom_enddate"
+      }
+    });
+
+    const leaveTypeIds = balanceData.value.map(i => i._ecom_leavetype_value);
+
+    const leaveTypePromises = leaveTypeIds.map(id =>
+      dataverseRequest(req, "get", `ecom_leavetypes(${id})`, {
+        params: { $select: "ecom_name,ecom_quota" }
+      })
+    );
+    const leaveTypes = await Promise.all(leaveTypePromises);
+    
+    if (!balanceData.value || balanceData.value.length === 0) {
       return reply.code(404).send({ message: `No leave balance records found for this employee for the period ${period}.` });
     }
+
+    const balances = balanceData.value.map((item, i) => ({
+      leave_type_id: leaveTypeIds[i],
+      leave_type_name: leaveTypes[i]?.ecom_name || "(unknown)",
+      quota: leaveTypes[i]?.ecom_quota || 0,
+      balance: item.ecom_balance,
+      end_date: item.ecom_enddate
+    }));
 
     return balances;
 
   } catch (err) {
-    console.error("❌ Error fetching leave balance for admin:", err.response?.data || err.message);
+    console.error("❌ Error fetching leave balance:", err.response?.data || err.message);
     reply.status(500).send({
       error: "Failed to fetch leave balance",
       details: err.response?.data?.error?.message || err.message,
@@ -701,6 +710,7 @@ fastify.get("/leave/requests", { preValidation: [fastify.authenticate] }, async 
 fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async (req, reply) => {
   // Match incoming snake_case from client and rename to camelCase for internal use
   const { leave_typeid: leaveTypeId, start_date: startDate, days, reason } = req.body;
+  const employeeId = req.user.employeeId;
 
   // 1. Validasi input dasar
   if (!leaveTypeId || !startDate || !days) {
@@ -741,25 +751,7 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
   try {
     const leaveYear = start.getUTCFullYear().toString();
 
-    // 1. Cek Saldo Cuti (menggunakan fungsi yang sama persis dengan GET /leave/balance)
-    const allBalances = await getLeaveBalances(req, req.user.employeeId, leaveYear);
-
-    if (allBalances.length === 0) {
-      return reply.code(404).send({ message: `No leave balance records found for the year ${leaveYear}.` });
-    }
-
-    const specificBalance = allBalances.find(b => b.leave_type_id === leaveTypeId);
-
-    if (!specificBalance) {
-      return reply.code(404).send({ message: `No leave balance record found for the specified leave type for the year ${leaveYear}.` });
-    }
-
-    // 2. Validasi saldo
-    if (specificBalance.balance < days) {
-      return reply.code(400).send({ message: `Insufficient leave balance for '${specificBalance.leave_type_name}'. Available: ${specificBalance.balance}, Requested: ${days}.` });
-    }
-
-    // 3. Dapatkan ID personal information untuk binding (diperlukan untuk membuat record cuti)
+    // 1. Dapatkan ID personal information untuk pengguna saat ini
     const personalInfoResponse = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
         params: {
             $filter: `ecom_workemail eq '${req.user.email}'`,
@@ -768,9 +760,37 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
     });
 
     if (!personalInfoResponse.value || personalInfoResponse.value.length === 0) {
-        return reply.code(404).send({ message: "Could not find your personal information record to create the leave request." });
+        return reply.code(404).send({ message: "Could not find your personal information record." });
     }
     const personalInfoId = personalInfoResponse.value[0].ecom_employeepersonalinformationid;
+
+    // 2. Ambil Saldo Cuti menggunakan personalInfoId
+    const balanceFilter = `ecom_Employee/ecom_personalinformationid eq ${personalInfoId} and ecom_period eq '${leaveYear}'`;
+    fastify.log.info({ reqId: req.id, msg: "Fetching all leave balances for employee and year", filter: balanceFilter });
+
+    const allBalancesData = await dataverseRequest(req, "get", "ecom_leaveusages", {
+      params: { $filter: balanceFilter, $select: "ecom_balance,_ecom_leavetype_value" }
+    });
+
+    if (!allBalancesData.value || allBalancesData.value.length === 0) {
+      return reply.code(404).send({ message: `No leave balance records found for the year ${leaveYear}.` });
+    }
+
+    const usage = allBalancesData.value.find(item => item._ecom_leavetype_value === leaveTypeId);
+    if (!usage) {
+      return reply.code(404).send({ message: `No leave balance record found for the specified leave type for the year ${leaveYear}.` });
+    }
+
+    const leaveTypeData = await dataverseRequest(req, "get", `ecom_leavetypes(${leaveTypeId})`, {
+        params: { $select: "ecom_name" }
+    });
+    const currentBalance = usage.ecom_balance;
+    const leaveTypeName = leaveTypeData?.ecom_name || "Unknown Leave";
+
+    // 3. Validasi saldo
+    if (currentBalance < days) {
+      return reply.code(400).send({ message: `Insufficient leave balance for '${leaveTypeName}'. Available: ${currentBalance}, Requested: ${days}.` });
+    }
 
     // 4. Hitung tanggal selesai & buat request
     const endDate = calculateEndDate(startDate, days);
@@ -797,7 +817,6 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
     });
 
   } catch (err) {
-    // This will likely catch the "Entity Does Not Exist" error from getLeaveBalances if the data is broken
     console.error("❌ Error applying for leave:", err.response?.data || err.message);
     reply.status(500).send({
       error: "Failed to apply for leave",
