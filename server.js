@@ -705,8 +705,7 @@ fastify.get("/leave/requests", { preValidation: [fastify.authenticate] }, async 
 });
 
 // ==============================
-// // ==============================
-// Leave: Apply for Leave (Final - Ecomate)
+// Leave: Apply for Leave (Final - Ecomate Revised)
 // ==============================
 fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async (req, reply) => {
   const { leave_typeid: leaveTypeId, start_date: startDate, days, reason } = req.body;
@@ -752,11 +751,12 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
   try {
     const leaveYear = start.getUTCFullYear().toString();
 
-    // === 3. Ambil ID personal information dari email ===
+    // === 3. Ambil semua record personal info berdasarkan email (urutan terbaru dulu) ===
     const personalInfoRes = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
       params: {
         $filter: `ecom_workemail eq '${employeeEmail}'`,
-        $select: "ecom_employeepersonalinformationid"
+        $select: "ecom_employeepersonalinformationid,modifiedon",
+        $orderby: "modifiedon desc"
       }
     });
 
@@ -764,24 +764,32 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
       return reply.code(404).send({ message: "Personal information record not found for your email." });
     }
 
-    const personalInfoId = personalInfoRes.value[0].ecom_employeepersonalinformationid;
+    // === 4. Loop setiap GUID dan cari leave balance aktif untuk tahun berjalan ===
+    let usage = null;
+    let personalInfoId = null;
+    for (const record of personalInfoRes.value) {
+      const candidateId = record.ecom_employeepersonalinformationid;
 
-    // === 4. Ambil saldo cuti dari ecom_leaveusages ===
-    const balancesRes = await dataverseRequest(req, "get", "ecom_leaveusages", {
-      params: {
-        $filter: `_ecom_employee_value eq ${personalInfoId} and ecom_period eq '${leaveYear}'`,
-        $select: "ecom_balance,_ecom_leavetype_value"
+      const balancesRes = await dataverseRequest(req, "get", "ecom_leaveusages", {
+        params: {
+          $filter: `_ecom_employee_value eq ${candidateId} and ecom_period eq '${leaveYear}'`,
+          $select: "ecom_balance,_ecom_leavetype_value"
+        }
+      });
+
+      if (balancesRes.value?.length) {
+        const match = balancesRes.value.find(u => u._ecom_leavetype_value === leaveTypeId);
+        if (match) {
+          usage = match;
+          personalInfoId = candidateId;
+          break;
+        }
       }
-    });
-
-    if (!balancesRes.value?.length) {
-      return reply.code(404).send({ message: `No leave balance found for year ${leaveYear}.` });
     }
 
-    const usage = balancesRes.value.find(u => u._ecom_leavetype_value === leaveTypeId);
-    if (!usage) {
+    if (!usage || !personalInfoId) {
       return reply.code(404).send({
-        message: `No leave balance record found for the specified leave type (${leaveTypeId}) in ${leaveYear}.`
+        message: `No leave balance found for ${employeeEmail} in year ${leaveYear}.`
       });
     }
 
@@ -836,6 +844,7 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
     // === 9. Response sukses ===
     return reply.code(201).send({
       message: `Leave request submitted successfully for ${leaveTypeName}.`,
+      year: leaveYear,
       balance_remaining: currentBalance - days,
       data: inserted
     });
