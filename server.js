@@ -705,122 +705,150 @@ fastify.get("/leave/requests", { preValidation: [fastify.authenticate] }, async 
 });
 
 // ==============================
-// 🔹 Cuti: Apply for Leave (Refactored)
+// // ==============================
+// Leave: Apply for Leave (Final - Ecomate)
 // ==============================
 fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async (req, reply) => {
-  // Match incoming snake_case from client and rename to camelCase for internal use
   const { leave_typeid: leaveTypeId, start_date: startDate, days, reason } = req.body;
-  const employeeId = req.user.employeeId;
+  const employeeEmail = req.user.email;
 
-  // 1. Validasi input dasar
+  // === 1. Validasi input dasar ===
   if (!leaveTypeId || !startDate || !days) {
-    const errorMessage = "leaveTypeId, startDate, and days are required.";
-    fastify.log.warn({ reqId: req.id, error: errorMessage, body: req.body });
-    return reply.code(400).send({ message: errorMessage });
-  }
-  if (!Number.isInteger(days) || days <= 0) {
-    const errorMessage = "'days' must be a positive integer.";
-    fastify.log.warn({ reqId: req.id, error: errorMessage, days });
-    return reply.code(400).send({ message: errorMessage });
+    const msg = "leaveTypeId, startDate, and days are required.";
+    fastify.log.warn({ reqId: req.id, msg, body: req.body });
+    return reply.code(400).send({ message: msg });
   }
 
-  // 2. Validasi tanggal mulai
+  if (!Number.isInteger(days) || days <= 0) {
+    const msg = "'days' must be a positive integer.";
+    fastify.log.warn({ reqId: req.id, msg, days });
+    return reply.code(400).send({ message: msg });
+  }
+
+  // === 2. Validasi tanggal mulai ===
   let start;
   try {
-    start = parseDateUTC(startDate);
+    start = new Date(startDate);
     const today = new Date();
     today.setUTCHours(0, 0, 0, 0);
 
     if (start < today) {
-      const errorMessage = "Start date cannot be in the past.";
-      fastify.log.warn({ reqId: req.id, error: errorMessage, startDate });
-      return reply.code(400).send({ message: errorMessage });
+      const msg = "Start date cannot be in the past.";
+      return reply.code(400).send({ message: msg });
     }
-    if (!isWorkday(start)) {
-      const dayOfWeek = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][start.getUTCDay()];
-      const errorMessage = `Start date ${startDate} is a ${dayOfWeek}, which is not a working day.`
-      fastify.log.warn({ reqId: req.id, error: errorMessage, startDate });
-      return reply.code(400).send({ message: errorMessage });
+
+    // validasi hari kerja (opsional)
+    const dayOfWeek = start.getUTCDay();
+    if (dayOfWeek === 0 || dayOfWeek === 6) {
+      const msg = `Start date ${startDate} falls on weekend (${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][dayOfWeek]}).`;
+      return reply.code(400).send({ message: msg });
     }
-  } catch (e) {
-    const errorMessage = "Invalid startDate format. Use YYYY-MM-DD.";
-    fastify.log.warn({ reqId: req.id, error: errorMessage, startDate });
-    return reply.code(400).send({ message: errorMessage });
+
+  } catch {
+    const msg = "Invalid startDate format. Use YYYY-MM-DD.";
+    return reply.code(400).send({ message: msg });
   }
 
   try {
     const leaveYear = start.getUTCFullYear().toString();
 
-    // 1. Dapatkan ID personal information untuk pengguna saat ini
-    const personalInfoResponse = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
-        params: {
-            $filter: `ecom_workemail eq '${req.user.email}'`,
-            $select: "ecom_employeepersonalinformationid"
-        }
+    // === 3. Ambil ID personal information dari email ===
+    const personalInfoRes = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
+      params: {
+        $filter: `ecom_workemail eq '${employeeEmail}'`,
+        $select: "ecom_employeepersonalinformationid"
+      }
     });
 
-    if (!personalInfoResponse.value || personalInfoResponse.value.length === 0) {
-        return reply.code(404).send({ message: "Could not find your personal information record." });
+    if (!personalInfoRes.value?.length) {
+      return reply.code(404).send({ message: "Personal information record not found for your email." });
     }
-    const personalInfoId = personalInfoResponse.value[0].ecom_employeepersonalinformationid;
 
-    // 2. Ambil Saldo Cuti menggunakan personalInfoId
-    const balanceFilter = `ecom_Employee/ecom_personalinformationid eq ${personalInfoId} and ecom_period eq '${leaveYear}'`;
-    fastify.log.info({ reqId: req.id, msg: "Fetching all leave balances for employee and year", filter: balanceFilter });
+    const personalInfoId = personalInfoRes.value[0].ecom_employeepersonalinformationid;
 
-    const allBalancesData = await dataverseRequest(req, "get", "ecom_leaveusages", {
-      params: { $filter: balanceFilter, $select: "ecom_balance,_ecom_leavetype_value" }
+    // === 4. Ambil saldo cuti dari ecom_leaveusages ===
+    const balancesRes = await dataverseRequest(req, "get", "ecom_leaveusages", {
+      params: {
+        $filter: `_ecom_employee_value eq ${personalInfoId} and ecom_period eq '${leaveYear}'`,
+        $select: "ecom_balance,_ecom_leavetype_value"
+      }
     });
 
-    if (!allBalancesData.value || allBalancesData.value.length === 0) {
-      return reply.code(404).send({ message: `No leave balance records found for the year ${leaveYear}.` });
+    if (!balancesRes.value?.length) {
+      return reply.code(404).send({ message: `No leave balance found for year ${leaveYear}.` });
     }
 
-    const usage = allBalancesData.value.find(item => item._ecom_leavetype_value === leaveTypeId);
+    const usage = balancesRes.value.find(u => u._ecom_leavetype_value === leaveTypeId);
     if (!usage) {
-      return reply.code(404).send({ message: `No leave balance record found for the specified leave type for the year ${leaveYear}.` });
+      return reply.code(404).send({
+        message: `No leave balance record found for the specified leave type (${leaveTypeId}) in ${leaveYear}.`
+      });
     }
 
-    const leaveTypeData = await dataverseRequest(req, "get", `ecom_leavetypes(${leaveTypeId})`, {
-        params: { $select: "ecom_name" }
-    });
     const currentBalance = usage.ecom_balance;
-    const leaveTypeName = leaveTypeData?.ecom_name || "Unknown Leave";
 
-    // 3. Validasi saldo
+    // === 5. Ambil nama jenis cuti (opsional, untuk pesan response) ===
+    let leaveTypeName = "Leave";
+    try {
+      const leaveTypeRes = await dataverseRequest(req, "get", `ecom_leavetypes(${leaveTypeId})`, {
+        params: { $select: "ecom_name" }
+      });
+      leaveTypeName = leaveTypeRes?.ecom_name || leaveTypeName;
+    } catch (_) {}
+
+    // === 6. Validasi saldo cuti ===
     if (currentBalance < days) {
-      return reply.code(400).send({ message: `Insufficient leave balance for '${leaveTypeName}'. Available: ${currentBalance}, Requested: ${days}.` });
+      return reply.code(400).send({
+        message: `Insufficient balance for '${leaveTypeName}'. Available: ${currentBalance}, Requested: ${days}.`
+      });
     }
 
-    // 4. Hitung tanggal selesai & buat request
-    const endDate = calculateEndDate(startDate, days);
-    const leaveRequestName = `Leave Request - ${req.user.email} - ${startDate}`;
+    // === 7. Hitung endDate ===
+    const endDate = new Date(start);
+    let daysAdded = 0;
+    while (daysAdded < days - 1) { // -1 karena startDate dihitung sebagai hari pertama
+      endDate.setUTCDate(endDate.getUTCDate() + 1);
+      const d = endDate.getUTCDay();
+      if (d !== 0 && d !== 6) daysAdded++;
+    }
 
+    const endDateStr = endDate.toISOString().split("T")[0];
+    const leaveRequestName = `Leave Request - ${employeeEmail} - ${startDate}`;
+
+    // === 8. Buat pengajuan cuti ke tabel ecom_employeeleaves ===
     const newLeaveRequest = {
       "ecom_Employee@odata.bind": `/ecom_employeepersonalinformations(${personalInfoId})`,
       "ecom_LeaveType@odata.bind": `/ecom_leavetypes(${leaveTypeId})`,
       ecom_name: leaveRequestName,
       ecom_startdate: startDate,
-      ecom_enddate: endDate,
+      ecom_enddate: endDateStr,
       ecom_numberofdays: days,
       ecom_reason: reason || null,
-      ecom_leavestatus: 273700000, // Pending: waiting for PM/SM/Direct SPV Approval
-      ecom_pmsmapprovalstatus: 273700000, // Pending: waiting for PM/SM/Direct SPV Approval
-      ecom_hrapprovalstatus: 273700000 // Pending: waiting for PM/SM/Direct SPV Approval
+      ecom_leavestatus: 273700000, // Pending
+      ecom_pmsmapprovalstatus: 273700000, // Pending
+      ecom_hrapprovalstatus: 273700000 // Pending
     };
 
-    const inserted = await dataverseRequest(req, "post", "ecom_employeeleaves", { data: newLeaveRequest });
+    const inserted = await dataverseRequest(req, "post", "ecom_employeeleaves", {
+      data: newLeaveRequest
+    });
 
+    // === 9. Response sukses ===
     return reply.code(201).send({
-      message: "Leave request submitted successfully.",
+      message: `Leave request submitted successfully for ${leaveTypeName}.`,
+      balance_remaining: currentBalance - days,
       data: inserted
     });
 
   } catch (err) {
-    console.error("❌ Error applying for leave:", err.response?.data || err.message);
-    reply.status(500).send({
+    fastify.log.error({
+      reqId: req.id,
+      msg: "❌ Failed to apply leave",
+      error: err.response?.data || err.message
+    });
+    reply.code(500).send({
       error: "Failed to apply for leave",
-      details: err.response?.data?.error?.message || err.message,
+      details: err.response?.data?.error?.message || err.message
     });
   }
 });
