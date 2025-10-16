@@ -705,7 +705,7 @@ fastify.get("/leave/requests", { preValidation: [fastify.authenticate] }, async 
 });
 
 // ==============================
-// Leave: Apply for Leave (Final - Ecomate Revised)
+// Leave: Apply for Leave (Final - By Email → Employee GUID)
 // ==============================
 fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async (req, reply) => {
   const { leave_typeid: leaveTypeId, start_date: startDate, days, reason } = req.body;
@@ -713,15 +713,11 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
 
   // === 1. Validasi input dasar ===
   if (!leaveTypeId || !startDate || !days) {
-    const msg = "leaveTypeId, startDate, and days are required.";
-    fastify.log.warn({ reqId: req.id, msg, body: req.body });
-    return reply.code(400).send({ message: msg });
+    return reply.code(400).send({ message: "leaveTypeId, startDate, and days are required." });
   }
 
   if (!Number.isInteger(days) || days <= 0) {
-    const msg = "'days' must be a positive integer.";
-    fastify.log.warn({ reqId: req.id, msg, days });
-    return reply.code(400).send({ message: msg });
+    return reply.code(400).send({ message: "'days' must be a positive integer." });
   }
 
   // === 2. Validasi tanggal mulai ===
@@ -731,133 +727,109 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
     const today = new Date();
     today.setUTCHours(0, 0, 0, 0);
 
-    if (start < today) {
-      const msg = "Start date cannot be in the past.";
-      return reply.code(400).send({ message: msg });
-    }
+    if (start < today) return reply.code(400).send({ message: "Start date cannot be in the past." });
 
-    // validasi hari kerja (opsional)
     const dayOfWeek = start.getUTCDay();
     if (dayOfWeek === 0 || dayOfWeek === 6) {
-      const msg = `Start date ${startDate} falls on weekend (${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][dayOfWeek]}).`;
-      return reply.code(400).send({ message: msg });
+      return reply.code(400).send({ message: `Start date ${startDate} falls on a weekend.` });
     }
-
   } catch {
-    const msg = "Invalid startDate format. Use YYYY-MM-DD.";
-    return reply.code(400).send({ message: msg });
+    return reply.code(400).send({ message: "Invalid startDate format. Use YYYY-MM-DD." });
   }
 
   try {
     const leaveYear = start.getUTCFullYear().toString();
 
-    // === 3. Ambil semua record personal info berdasarkan email (urutan terbaru dulu) ===
+    // === 3. Ambil GUID karyawan dari email ===
     const personalInfoRes = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
       params: {
         $filter: `ecom_workemail eq '${employeeEmail}'`,
-        $select: "ecom_employeepersonalinformationid,modifiedon",
-        $orderby: "modifiedon desc"
-      }
+        $select: "ecom_employeepersonalinformationid,ecom_workemail,ecom_name",
+      },
     });
 
     if (!personalInfoRes.value?.length) {
-      return reply.code(404).send({ message: "Personal information record not found for your email." });
+      return reply.code(404).send({ message: `No personal record found for ${employeeEmail}.` });
     }
 
-    // === 4. Loop setiap GUID dan cari leave balance aktif untuk tahun berjalan ===
-    let usage = null;
-    let personalInfoId = null;
-    for (const record of personalInfoRes.value) {
-      const candidateId = record.ecom_employeepersonalinformationid;
+    // Cari record personal info paling baru (misalnya tahun tertinggi di ecom_name)
+    const sortedPersonal = personalInfoRes.value.sort((a, b) =>
+      (b.ecom_name || "").localeCompare(a.ecom_name || "")
+    );
+    const employeeInfo = sortedPersonal[0];
+    const employeeGuid = employeeInfo.ecom_employeepersonalinformationid;
 
-      const balancesRes = await dataverseRequest(req, "get", "ecom_leaveusages", {
-        params: {
-          $filter: `_ecom_employee_value eq ${candidateId} and ecom_period eq '${leaveYear}'`,
-          $select: "ecom_balance,_ecom_leavetype_value"
-        }
-      });
+    // === 4. Ambil saldo cuti dari ecom_leaveusages ===
+    const balancesRes = await dataverseRequest(req, "get", "ecom_leaveusages", {
+      params: {
+        $filter: `_ecom_employee_value eq ${employeeGuid} and ecom_period eq '${leaveYear}'`,
+        $select: "ecom_balance,_ecom_leavetype_value,ecom_period,ecom_name",
+      },
+    });
 
-      if (balancesRes.value?.length) {
-        const match = balancesRes.value.find(u => u._ecom_leavetype_value === leaveTypeId);
-        if (match) {
-          usage = match;
-          personalInfoId = candidateId;
-          break;
-        }
-      }
-    }
-
-    if (!usage || !personalInfoId) {
+    if (!balancesRes.value?.length) {
       return reply.code(404).send({
-        message: `No leave balance found for ${employeeEmail} in year ${leaveYear}.`
+        message: `No leave balance found for ${employeeEmail} in year ${leaveYear}.`,
+      });
+    }
+
+    const usage = balancesRes.value.find(u => u._ecom_leavetype_value === leaveTypeId);
+    if (!usage) {
+      return reply.code(404).send({
+        message: `No leave balance record found for leave type ${leaveTypeId} in ${leaveYear}.`,
       });
     }
 
     const currentBalance = usage.ecom_balance;
 
-    // === 5. Ambil nama jenis cuti (opsional, untuk pesan response) ===
-    let leaveTypeName = "Leave";
-    try {
-      const leaveTypeRes = await dataverseRequest(req, "get", `ecom_leavetypes(${leaveTypeId})`, {
-        params: { $select: "ecom_name" }
-      });
-      leaveTypeName = leaveTypeRes?.ecom_name || leaveTypeName;
-    } catch (_) {}
-
-    // === 6. Validasi saldo cuti ===
+    // === 5. Validasi saldo ===
     if (currentBalance < days) {
       return reply.code(400).send({
-        message: `Insufficient balance for '${leaveTypeName}'. Available: ${currentBalance}, Requested: ${days}.`
+        message: `Insufficient balance. Available: ${currentBalance}, Requested: ${days}.`,
       });
     }
 
-    // === 7. Hitung endDate ===
+    // === 6. Hitung end date ===
     const endDate = new Date(start);
     let daysAdded = 0;
-    while (daysAdded < days - 1) { // -1 karena startDate dihitung sebagai hari pertama
+    while (daysAdded < days - 1) {
       endDate.setUTCDate(endDate.getUTCDate() + 1);
       const d = endDate.getUTCDay();
       if (d !== 0 && d !== 6) daysAdded++;
     }
-
     const endDateStr = endDate.toISOString().split("T")[0];
-    const leaveRequestName = `Leave Request - ${employeeEmail} - ${startDate}`;
 
-    // === 8. Buat pengajuan cuti ke tabel ecom_employeeleaves ===
+    // === 7. Insert ke ecom_employeeleaves ===
     const newLeaveRequest = {
-      "ecom_Employee@odata.bind": `/ecom_employeepersonalinformations(${personalInfoId})`,
+      "ecom_Employee@odata.bind": `/ecom_employeepersonalinformations(${employeeGuid})`,
       "ecom_LeaveType@odata.bind": `/ecom_leavetypes(${leaveTypeId})`,
-      ecom_name: leaveRequestName,
+      ecom_name: `Leave Request - ${employeeEmail} - ${startDate}`,
       ecom_startdate: startDate,
       ecom_enddate: endDateStr,
       ecom_numberofdays: days,
       ecom_reason: reason || null,
       ecom_leavestatus: 273700000, // Pending
-      ecom_pmsmapprovalstatus: 273700000, // Pending
-      ecom_hrapprovalstatus: 273700000 // Pending
+      ecom_pmsmapprovalstatus: 273700000,
+      ecom_hrapprovalstatus: 273700000,
     };
 
-    const inserted = await dataverseRequest(req, "post", "ecom_employeeleaves", {
-      data: newLeaveRequest
-    });
+    const inserted = await dataverseRequest(req, "post", "ecom_employeeleaves", { data: newLeaveRequest });
 
-    // === 9. Response sukses ===
+    // === 8. Response sukses ===
     return reply.code(201).send({
-      message: `Leave request submitted successfully for ${leaveTypeName}.`,
-      year: leaveYear,
+      message: `Leave request submitted successfully.`,
       balance_remaining: currentBalance - days,
-      data: inserted
+      data: inserted,
     });
 
   } catch (err) {
     fastify.log.error({
-      reqId: req.id,
       msg: "❌ Failed to apply leave",
-      error: err.response?.data || err.message
+      error: err.response?.data || err.message,
     });
     reply.code(500).send({
       error: "Failed to apply for leave",
-      details: err.response?.data?.error?.message || err.message
+      details: err.response?.data?.error?.message || err.message,
     });
   }
 });
