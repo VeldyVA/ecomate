@@ -908,8 +908,9 @@ fastify.post("/leave/requests/:leaveId/cancel", { preValidation: [fastify.authen
     }
 
     // Validasi status (hanya yang pending yang bisa dibatalkan)
-    if (leaveRequest.ecom_leavestatus !== 1) { // 1 = Pending
-      return reply.code(400).send({ message: `Only requests with 'Pending' status can be cancelled. Current status: ${leaveRequest.ecom_leavestatus}` });
+    const cancellableStatuses = [273700000, 273700001, 273700005]; // Waiting for PM/SM/SPV approval, Waiting for HR Manager Approval, Draft
+    if (!cancellableStatuses.includes(leaveRequest.ecom_leavestatus)) {
+      return reply.code(400).send({ message: `Sorry, you cannot cancel this leave because its status is not 'Waiting for PM/SM/SPV approval', 'Waiting for HR Manager Approval', or 'Draft'. Current status is ${leaveRequest.ecom_leavestatus}.` });
     }
 
     const updates = {
