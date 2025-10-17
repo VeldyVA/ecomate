@@ -744,7 +744,7 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
     const personalInfoRes = await dataverseRequest(req, "get", "ecom_personalinformations", {
       params: {
         $filter: `ecom_workemail eq '${employeeEmail}'`,
-        $select: "ecom_personalinformationid,ecom_workemail,ecom_name",
+        $select: "ecom_personalinformationid,ecom_workemail,ecom_employeename,ecom_nik",
       },
     });
 
@@ -752,12 +752,12 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
       return reply.code(404).send({ message: `No personal record found for ${employeeEmail}.` });
     }
 
-    // Cari record personal info paling baru (misalnya tahun tertinggi di ecom_name)
+    // Cari record personal info paling baru (misalnya tahun tertinggi di ecom_employeename)
     const sortedPersonal = personalInfoRes.value.sort((a, b) =>
-      (b.ecom_name || "").localeCompare(a.ecom_name || "")
+      (b.ecom_employeename || "").localeCompare(a.ecom_employeename || "")
     );
     const employeeInfo = sortedPersonal[0];
-    const employeeGuid = employeeInfo.ecom_personalinformationid;
+    const employeeGuid = employeeInfo.ecom_personalinformationid; // GUID dari personal info record
 
     // === 4. Ambil saldo cuti dari ecom_leaveusages ===
     const balancesRes = await dataverseRequest(req, "get", "ecom_leaveusages", {
@@ -801,9 +801,11 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
 
     // === 7. Insert ke ecom_employeeleaves ===
     const newLeaveRequest = {
-      "ecom_EmployeeId@odata.bind": `/ecom_personalinformations(${employeeGuid})`,
+      // Gunakan navigation property 'ecom_employee' dan bind ke entitas 'ecom_personalinformations'
+      "ecom_employee@odata.bind": `/ecom_personalinformations(${employeeGuid})`,
       "ecom_LeaveType@odata.bind": `/ecom_leavetypes(${leaveTypeId})`,
-      ecom_name: `Leave Request - ${employeeEmail} - ${startDate}`,
+      // Format ecom_name sesuai contoh Anda
+      ecom_name: `${employeeInfo.ecom_nik} - ${employeeInfo.ecom_employeename} - Leave request`,
       ecom_startdate: startDate,
       ecom_enddate: endDateStr,
       ecom_numberofdays: days,
