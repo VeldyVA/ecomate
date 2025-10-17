@@ -874,8 +874,22 @@ fastify.post("/leave/requests/:leaveId/cancel", { preValidation: [fastify.authen
   }
 
   try {
+    // Ambil personalInfoId dari user yang sedang login
+    const employeeEmail = req.user.email; // Get email from authenticated user
+    const personalInfoRes = await dataverseRequest(req, "get", "ecom_personalinformations", {
+      params: {
+        $filter: `ecom_workemail eq '${employeeEmail}'`,
+        $select: "ecom_personalinformationid",
+      },
+    });
+
+    if (!personalInfoRes.value?.length) {
+      return reply.code(404).send({ message: `Personal information not found for current user.` });
+    }
+    const currentUserPersonalInfoId = personalInfoRes.value[0].ecom_personalinformationid;
+
     // Validasi kepemilikan (kecuali untuk admin)
-    if (req.user.role !== 'admin' && leaveRequest._ecom_employee_value !== employeeId) {
+    if (req.user.role !== 'admin' && leaveRequest._ecom_employee_value !== currentUserPersonalInfoId) {
       return reply.code(403).send({ message: "You can only cancel your own leave requests." });
     }
 
