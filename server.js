@@ -681,12 +681,26 @@ fastify.get("/leave/types", { preValidation: [fastify.authenticate] }, async (re
 // 🔹 Cuti: Get User's Leave Requests
 // ==============================
 fastify.get("/leave/requests", { preValidation: [fastify.authenticate] }, async (req, reply) => {
-  const employeeId = req.user.employeeId; // Diubah dari req.session.employee_id
+  const employeeId = req.user.employeeId; // GUID from ecom_employees
 
   try {
+    // Ambil personalInfoId dari user yang sedang login
+    const employeeEmail = req.user.email; // Get email from authenticated user
+    const personalInfoRes = await dataverseRequest(req, "get", "ecom_personalinformations", {
+      params: {
+        $filter: `ecom_workemail eq '${employeeEmail}'`,
+        $select: "ecom_personalinformationid",
+      },
+    });
+
+    if (!personalInfoRes.value?.length) {
+      return reply.code(404).send({ message: `Personal information not found for current user.` });
+    }
+    const currentUserPersonalInfoId = personalInfoRes.value[0].ecom_personalinformationid;
+
     const requestsData = await dataverseRequest(req, "get", "ecom_employeeleaves", {
       params: {
-        $filter: `_ecom_employee_value eq ${employeeId}`,
+        $filter: `_ecom_employee_value eq ${currentUserPersonalInfoId}`,
         $expand: "ecom_LeaveType($select=ecom_name)",
         $select: "ecom_name,ecom_startdate,ecom_enddate,ecom_numberofdays,ecom_reason,ecom_leavestatus,ecom_pmsmapprovalstatus,ecom_pmsmnote,ecom_hrapprovalstatus,ecom_hrnote",
         $orderby: "createdon desc"
