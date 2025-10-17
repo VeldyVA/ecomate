@@ -741,10 +741,10 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
     const leaveYear = start.getUTCFullYear().toString();
 
     // === 3. Ambil GUID karyawan dari email ===
-    const personalInfoRes = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
+    const personalInfoRes = await dataverseRequest(req, "get", "ecom_personalinformations", {
       params: {
         $filter: `ecom_workemail eq '${employeeEmail}'`,
-        $select: "ecom_employeepersonalinformationid,ecom_workemail,ecom_name",
+        $select: "ecom_personalinformationid,ecom_workemail,ecom_name",
       },
     });
 
@@ -757,7 +757,7 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
       (b.ecom_name || "").localeCompare(a.ecom_name || "")
     );
     const employeeInfo = sortedPersonal[0];
-    const employeeGuid = employeeInfo.ecom_employeepersonalinformationid;
+    const employeeGuid = employeeInfo.ecom_personalinformationid;
 
     // === 4. Ambil saldo cuti dari ecom_leaveusages ===
     const balancesRes = await dataverseRequest(req, "get", "ecom_leaveusages", {
@@ -801,7 +801,7 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
 
     // === 7. Insert ke ecom_employeeleaves ===
     const newLeaveRequest = {
-      "ecom_Employee@odata.bind": `/ecom_employeepersonalinformations(${employeeGuid})`,
+      "ecom_EmployeeId@odata.bind": `/ecom_personalinformations(${employeeGuid})`,
       "ecom_LeaveType@odata.bind": `/ecom_leavetypes(${leaveTypeId})`,
       ecom_name: `Leave Request - ${employeeEmail} - ${startDate}`,
       ecom_startdate: startDate,
