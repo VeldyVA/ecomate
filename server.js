@@ -678,16 +678,45 @@ fastify.get("/leave/types", { preValidation: [fastify.authenticate] }, async (re
 });
 
 // ==============================
-// 🔹 Cuti: Get User's Leave Requests
+// 🔹 Leave Status Mapping (global di file ini)
 // ==============================
 const LeaveStatus = {
-  273700000: "Waiting for PM/SM/SPV Approval",
-  273700001: "Waiting for HR Manager Approval",
-  273700002: "Approved",
-  273700003: "Rejected",
-  273700004: "Cancelled",
-  273700005: "Draft",
+  273700000: { en: "Waiting for PM/SM/SPV Approval", id: "Menunggu Persetujuan Atasan" },
+  273700001: { en: "Waiting for HR Manager Approval", id: "Menunggu Persetujuan HR" },
+  273700002: { en: "Approved", id: "Disetujui" },
+  273700003: { en: "Rejected", id: "Ditolak" },
+  273700004: { en: "Cancelled", id: "Dibatalkan" },
+  273700005: { en: "Draft", id: "Draf" },
 };
+
+// ==============================
+// 🔹 Approval Status Mapping (PM/SM dan HR)
+// ==============================
+const PMSMApprovalStatus = {
+  273700000: { en: "Waiting for Approval", id: "Menunggu Persetujuan" },
+  273700001: { en: "Approved", id: "Disetujui" },
+  273700002: { en: "Rejected", id: "Ditolak" },
+  273700003: { en: "Draft", id: "Draf" },
+  273700004: { en: "Rejected by Others", id: "Ditolak oleh Pihak Lain" },
+  273700005: { en: "Waiting for Final Result", id: "Menunggu Hasil Akhir" },
+  273700006: { en: "Passed", id: "Lulus" },
+  273700007: { en: "Failed", id: "Gagal" },
+};
+
+const HRApprovalStatus = {
+  273700000: { en: "Waiting for Approval", id: "Menunggu Persetujuan" },
+  273700001: { en: "Approved", id: "Disetujui" },
+  273700002: { en: "Rejected", id: "Ditolak" },
+  273700003: { en: "Draft", id: "Draf" },
+  273700004: { en: "Rejected by Others", id: "Ditolak oleh Pihak Lain" },
+  273700005: { en: "Waiting for Final Result", id: "Menunggu Hasil Akhir" },
+  273700006: { en: "Passed", id: "Lulus" },
+  273700007: { en: "Failed", id: "Gagal" },
+};
+
+// ==============================
+// 🔹 Cuti: Get User's Leave Requests
+// ==============================
 
 fastify.get("/leave/requests", { preValidation: [fastify.authenticate] }, async (req, reply) => {
   const employeeId = req.user.employeeId; // GUID from ecom_employees
