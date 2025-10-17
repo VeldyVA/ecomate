@@ -919,7 +919,7 @@ fastify.post("/leave/requests/:leaveId/cancel", { preValidation: [fastify.authen
       ecom_leavestatus: 3 // 3 = Cancelled
     };
 
-    await dataverseRequest("patch", `ecom_employeeleaves(${leaveId})`, { data: updates });
+    await dataverseRequest(req, "patch", `ecom_employeeleaves(${leaveId})`, { data: updates });
 
     fastify.log.info(`Leave request ${leaveId} has been cancelled successfully.`);
     return { message: `Leave request ${leaveId} has been cancelled.` };
