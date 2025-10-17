@@ -925,11 +925,26 @@ fastify.post("/leave/requests/:leaveId/cancel", { preValidation: [fastify.authen
     return { message: `Leave request ${leaveId} has been cancelled.` };
 
   } catch (err) {
-    fastify.log.error("❌ Error during leave cancellation logic (validation/update):", err.response?.data || err.message);
-    reply.status(500).send({
-      error: "An unexpected error occurred during the cancellation process.",
-      details: err.response?.data?.error?.message || err.message,
-    });
+  const status = err.response?.status;
+  const message = err.response?.data?.error?.message || err.message;
+  const code = err.response?.data?.error?.code;
+  const inner = err.response?.data?.error?.innererror?.message;
+
+  fastify.log.error("❌ Error during leave cancellation logic (validation/update):", {
+    status,
+    code,
+    message,
+    inner,
+    raw: err.response?.data,
+  });
+
+  reply.status(status || 500).send({
+    error: "An unexpected error occurred during the cancellation process.",
+    status,
+    code,
+    message,
+    inner,
+  });
   }
 });
 
