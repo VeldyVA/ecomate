@@ -851,11 +851,10 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
 });
 
 // ==============================
-// 🔹 Cuti: Cancel a Leave Request (Refactored with Retry)
+// 🔹 Cuti: Cancel a Leave Request (Final Version - Clean & Safe)
 // ==============================
 fastify.post("/leave/requests/:leaveId/cancel", { preValidation: [fastify.authenticate] }, async (req, reply) => {
   const { leaveId } = req.params;
-  const employeeId = req.user.employeeId;
 
   const MAX_RETRIES = 3;
   const RETRY_DELAY_MS = 500;
@@ -863,88 +862,78 @@ fastify.post("/leave/requests/:leaveId/cancel", { preValidation: [fastify.authen
 
   const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+  // === Step 1: Ambil data cuti yang ingin dibatalkan ===
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
-      fastify.log.info(`[Attempt ${attempt}/${MAX_RETRIES}] Fetching leave request ${leaveId} for cancellation.`);
       leaveRequest = await dataverseRequest(req, "get", `ecom_employeeleaves(${leaveId})`, {
         params: { $select: "ecom_leavestatus,_ecom_employee_value" }
       });
-      if (leaveRequest) break; // Success, exit loop
+      if (leaveRequest) break;
     } catch (err) {
-      if (err.response && err.response.status === 404 && attempt < MAX_RETRIES) {
-        fastify.log.warn(`Leave request ${leaveId} not found. Retrying in ${RETRY_DELAY_MS}ms...`);
+      if (err.response?.status === 404 && attempt < MAX_RETRIES) {
         await sleep(RETRY_DELAY_MS);
       } else {
-        // For non-404 errors or on the last attempt, fail permanently
-        fastify.log.error(`❌ Failed to fetch leave request ${leaveId}:`, err.response?.data || err.message);
         const statusCode = err.response?.status === 404 ? 404 : 500;
-        const message = err.response?.status === 404 ? `Leave request with ID ${leaveId} not found.` : "Failed to cancel leave request";
-        return reply.code(statusCode).send({ 
+        const message = err.response?.status === 404
+          ? `Leave request with ID ${leaveId} not found.`
+          : "Failed to fetch leave request.";
+        return reply.code(statusCode).send({
           error: message,
-          details: err.response?.data?.error?.message || err.message 
+          details: err.response?.data?.error?.message || err.message
         });
       }
     }
   }
 
   try {
-    // Ambil personalInfoId dari user yang sedang login
-    const employeeEmail = req.user.email; // Get email from authenticated user
+    // === Step 2: Ambil personal info ID dari user login ===
+    const employeeEmail = req.user.email;
     const personalInfoRes = await dataverseRequest(req, "get", "ecom_personalinformations", {
       params: {
         $filter: `ecom_workemail eq '${employeeEmail}'`,
-        $select: "ecom_personalinformationid",
-      },
+        $select: "ecom_personalinformationid"
+      }
     });
 
     if (!personalInfoRes.value?.length) {
-      return reply.code(404).send({ message: `Personal information not found for current user.` });
+      return reply.code(404).send({ message: "Personal information not found for current user." });
     }
+
     const currentUserPersonalInfoId = personalInfoRes.value[0].ecom_personalinformationid;
 
-    // Validasi kepemilikan (kecuali untuk admin)
-    if (req.user.role !== 'admin' && leaveRequest._ecom_employee_value !== currentUserPersonalInfoId) {
+    // === Step 3: Validasi kepemilikan (kecuali admin) ===
+    if (req.user.role !== "admin" && leaveRequest._ecom_employee_value !== currentUserPersonalInfoId) {
       return reply.code(403).send({ message: "You can only cancel your own leave requests." });
     }
 
-    // Validasi status (hanya yang pending yang bisa dibatalkan)
-    const cancellableStatuses = [273700000, 273700001, 273700005]; // Waiting for PM/SM/SPV approval, Waiting for HR Manager Approval, Draft
+    // === Step 4: Validasi status cuti yang boleh dibatalkan ===
+    const cancellableStatuses = [273700000, 273700001, 273700005]; 
+    // Waiting for PM/SM/SPV approval, Waiting for HR Manager Approval, Draft
+
     if (!cancellableStatuses.includes(leaveRequest.ecom_leavestatus)) {
-      return reply.code(400).send({ message: `Sorry, you cannot cancel this leave because its status is not 'Waiting for PM/SM/SPV approval', 'Waiting for HR Manager Approval', or 'Draft'. Current status is ${leaveRequest.ecom_leavestatus}.` });
+      return reply.code(400).send({
+        message: `You cannot cancel this leave because its current status (${leaveRequest.ecom_leavestatus}) is not eligible for cancellation.`
+      });
     }
 
-    const updates = {
-      statecode: 1,       // Deactivate the record
-      statuscode: 2,      // Inactive
-      ecom_leavestatus: 3 // 3 = Cancelled
-    };
+    // === Step 5: Update status ke "Cancelled" ===
+    await dataverseRequest(req, "patch", `ecom_employeeleaves(${leaveId})`, {
+      data: { ecom_leavestatus: 273700004 } // ✅ Official code for Cancelled
+    });
 
-    await dataverseRequest(req, "patch", `ecom_employeeleaves(${leaveId})`, { data: updates });
-
-    fastify.log.info(`Leave request ${leaveId} has been cancelled successfully.`);
-    return { message: `Leave request ${leaveId} has been cancelled.` };
+    return reply.code(200).send({
+      message: `Leave request ${leaveId} has been cancelled successfully.`,
+      new_status: 273700004
+    });
 
   } catch (err) {
-  const status = err.response?.status;
-  const message = err.response?.data?.error?.message || err.message;
-  const code = err.response?.data?.error?.code;
-  const inner = err.response?.data?.error?.innererror?.message;
+    const status = err.response?.status || 500;
+    const message = err.response?.data?.error?.message || err.message;
 
-  fastify.log.error("❌ Error during leave cancellation logic (validation/update):", {
-    status,
-    code,
-    message,
-    inner,
-    raw: err.response?.data,
-  });
-
-  reply.status(status || 500).send({
-    error: "An unexpected error occurred during the cancellation process.",
-    status,
-    code,
-    message,
-    inner,
-  });
+    return reply.code(status).send({
+      error: "An unexpected error occurred during the cancellation process.",
+      message
+    });
   }
 });
 
