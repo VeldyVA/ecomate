@@ -802,7 +802,7 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
     // === 7. Insert ke ecom_employeeleaves ===
     const newLeaveRequest = {
       // Gunakan navigation property 'ecom_employee' dan bind ke entitas 'ecom_personalinformations'
-      "ecom_employee@odata.bind": `/ecom_personalinformations(${employeeGuid})`,
+      "ecom_Employee@odata.bind": `/ecom_personalinformations(${employeeGuid})`,
       "ecom_LeaveType@odata.bind": `/ecom_leavetypes(${leaveTypeId})`,
       // Format ecom_name sesuai contoh Anda
       ecom_name: `${employeeInfo.ecom_nik} - ${employeeInfo.ecom_employeename} - Leave request`,
