@@ -680,6 +680,15 @@ fastify.get("/leave/types", { preValidation: [fastify.authenticate] }, async (re
 // ==============================
 // 🔹 Cuti: Get User's Leave Requests
 // ==============================
+const LeaveStatus = {
+  273700000: "Waiting for PM/SM/SPV Approval",
+  273700001: "Waiting for HR Manager Approval",
+  273700002: "Approved",
+  273700003: "Rejected",
+  273700004: "Cancelled",
+  273700005: "Draft",
+};
+
 fastify.get("/leave/requests", { preValidation: [fastify.authenticate] }, async (req, reply) => {
   const employeeId = req.user.employeeId; // GUID from ecom_employees
 
@@ -968,6 +977,7 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
 // ==============================
 // 🔹 Admin: Search for employee's leave requests
 // ==============================
+
 fastify.get("/admin/leave-requests/search", { preValidation: [fastify.authenticate] }, async (req, reply) => {
   if (req.user.role !== "admin") {
     return reply.code(403).send({ message: "Admin only" });
