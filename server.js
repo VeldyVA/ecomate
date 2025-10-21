@@ -370,16 +370,16 @@ fastify.get("/admin/profile/search", { preValidation: [fastify.authenticate] }, 
   }
 
   try {
-    const personalInfoData = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
+    const personalInfoData = await dataverseRequest(req, "get", "ecom_personalinformations", {
       params: {
         $filter: filter,
         $select: [
-          "ecom_employeepersonalinformationid", "ecom_employeeid", "ecom_employeename", "ecom_gender", "ecom_dateofbirth",
-          "ecom_phonenumber", "ecom_status", "ecom_startwork",
-          "ecom_workexperience",
+          "ecom_personalinformationid", "ecom_nik", "ecom_employeename", "ecom_gender", "ecom_dateofbirth",
+          "ecom_phonenumber", "statecode", "ecom_startwork", "ecom_jobtitle",
+          "ecom_workexperience", "ecom_dateofemployment",
           "ecom_emergencycontactname", "ecom_emergencycontactaddress", "ecom_emergencycontractphonenumber",
           "ecom_emergencycontactrelationship", "ecom_address", "ecom_ktpnumber", "ecom_npwpnumber",
-          "ecom_profilepicture", "ecom_notes", "ecom_bankaccountnumber", "ecom_bpjsnumber",
+          "ecom_profilepicture", "ecom_bankaccountnumber", "ecom_bpjsnumber", "ecom_insurancenumber",
           "ecom_bpjstknumber", "ecom_maritalstatus", "ecom_numberofdependent", "ecom_placeofbirth",
           "ecom_religion", "ecom_bankname", "ecom_personalemail", "ecom_workemail"
         ].join(",")
@@ -1102,18 +1102,19 @@ fastify.get("/profile/personal-info", { preValidation: [fastify.authenticate] },
     const data = await dataverseRequest(
       req,
       "get",
-      "ecom_employeepersonalinformations",
+      "ecom_personalinformations",
       {
         params: {
           $filter: `_ecom_fullname_value eq ${employeeId}`,
           $select: [
-            "ecom_employeeid", "ecom_employeename", "ecom_gender", "ecom_dateofbirth",
-            "ecom_phonenumber", "ecom_status", "ecom_startwork", "ecom_workexperience",
-            "ecom_emergencycontactname", "ecom_emergencycontactaddress", "ecom_emergencycontractphonenumber",
-            "ecom_emergencycontactrelationship", "ecom_address", "ecom_ktpnumber", "ecom_npwpnumber",
-            "ecom_profilepicture", "ecom_notes", "ecom_bankaccountnumber", "ecom_bpjsnumber",
-            "ecom_bpjstknumber", "ecom_maritalstatus", "ecom_numberofdependent", "ecom_placeofbirth",
-            "ecom_religion", "ecom_bankname", "ecom_personalemail", "ecom_insurancenumber"
+          "ecom_personalinformationid", "ecom_nik", "ecom_employeename", "ecom_gender", "ecom_dateofbirth",
+          "ecom_phonenumber", "statecode", "ecom_startwork",
+          "ecom_workexperience", "ecom_dateofemployment", "ecom_jobtitle",
+          "ecom_emergencycontactname", "ecom_emergencycontactaddress", "ecom_emergencycontractphonenumber",
+          "ecom_emergencycontactrelationship", "ecom_address", "ecom_ktpnumber", "ecom_npwpnumber",
+          "ecom_profilepicture", "ecom_bankaccountnumber", "ecom_bpjsnumber",
+          "ecom_bpjstknumber", "ecom_maritalstatus", "ecom_numberofdependent", "ecom_placeofbirth",
+          "ecom_religion", "ecom_bankname", "ecom_personalemail", "ecom_workemail", "ecom_insurancenumber"
           ].join(",")
         }
       }
