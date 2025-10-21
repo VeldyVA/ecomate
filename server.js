@@ -408,30 +408,18 @@ fastify.patch("/profile/:employeeId", { preValidation: [fastify.authenticate] },
     return reply.code(403).send({ message: "Admin only" });
   }
 
-  const { employeeId } = req.params; 
+  const { employeeId } = req.params; // This is the personalinformationid (GUID)
 
   try {
-    const personalInfoData = await dataverseRequest(req, "get", "ecom_personalinformations", {
-      params: {
-        $filter: `ecom_workemail eq '${employeeEmail}'`,
-        $select: "ecom_personalinformationid",
-      }
-    });
-
-    if (!personalInfoData.value || personalInfoData.value.length === 0) {
-      return reply.code(404).send({ message: "Personal information record not found for this employee." });
-    }
-    const personalInfoId = personalInfoData.value[0].ecom_personalinformationid;
-
     const allowedFields = [
       "ecom_employeename", "ecom_gender", "ecom_dateofbirth",
-          "ecom_phonenumber", "statecode", "ecom_startwork", "ecom_jobtitle",
-          "ecom_workexperience", "ecom_dateofemployment",
-          "ecom_emergencycontactname", "ecom_emergencycontactaddress", "ecom_emergencycontractphonenumber",
-          "ecom_relationship", "ecom_address", "ecom_ktpnumber", "ecom_npwpnumber",
-          "ecom_profilepicture", "ecom_bankaccountnumber", "ecom_bpjsnumber", "ecom_insurancenumber",
-          "ecom_bpjstknumber", "ecom_maritalstatus", "ecom_numberofdependent", "ecom_placeofbirth",
-          "ecom_religion", "ecom_bankname", "ecom_personalemail", "ecom_workemail"
+      "ecom_phonenumber", "statecode", "ecom_startwork", "ecom_jobtitle",
+      "ecom_workexperience", "ecom_dateofemployment",
+      "ecom_emergencycontactname", "ecom_emergencycontactaddress", "ecom_emergencycontractphonenumber",
+      "ecom_relationship", "ecom_address", "ecom_ktpnumber", "ecom_npwpnumber",
+      "ecom_profilepicture", "ecom_bankaccountnumber", "ecom_bpjsnumber", "ecom_insurancenumber",
+      "ecom_bpjstknumber", "ecom_maritalstatus", "ecom_numberofdependent", "ecom_placeofbirth",
+      "ecom_religion", "ecom_bankname", "ecom_personalemail", "ecom_workemail"
     ];
 
     const updates = {};
@@ -442,14 +430,19 @@ fastify.patch("/profile/:employeeId", { preValidation: [fastify.authenticate] },
     }
 
     if (Object.keys(updates).length === 0) {
-        return reply.code(400).send({ message: "No valid fields to update were provided." });
+      return reply.code(400).send({ message: "No valid fields to update were provided." });
     }
 
-    await dataverseRequest(req, "patch", `ecom_personalinformations(${personalInfoId})`, { data: updates });
+    // Directly use the employeeId from the URL for the PATCH request
+    await dataverseRequest(req, "patch", `ecom_personalinformations(${employeeId})`, { data: updates });
 
     return { message: "Profile updated successfully." };
 
   } catch (err) {
+    // Add a check for 404 error, in case the ID is not found
+    if (err.response && err.response.status === 404) {
+      return reply.code(404).send({ message: `Personal information record with ID ${employeeId} not found.` });
+    }
     console.error("❌ Error updating profile:", err.response?.data || err.message);
     reply.status(500).send({
       error: "Failed to update profile",
