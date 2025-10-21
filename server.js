@@ -255,7 +255,7 @@ async function dataverseRequest(req, method, entitySet, options = {}) {
       Accept: "application/json",
       "Content-Type": "application/json",
     },
-    data: options.data || options || undefined,
+    data: options.data || undefined,
     params: options.params || undefined,
   });
 
