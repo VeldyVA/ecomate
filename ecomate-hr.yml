@@ -155,7 +155,101 @@ paths:
           application/json:
             schema:
               type: object
-              # ... (properti lainnya sama seperti sebelumnya)
+              properties:
+                ecom_employeename:
+                  type: string
+                  description: 'Nama lengkap karyawan.'
+                ecom_gender:
+                  type: integer
+                  description: 'Jenis kelamin karyawan (misal: 1 untuk Pria, 2 untuk Wanita).'
+                ecom_dateofbirth:
+                  type: string
+                  format: date
+                  description: 'Tanggal lahir karyawan (YYYY-MM-DD).'
+                ecom_phonenumber:
+                  type: string
+                  description: 'Nomor telepon karyawan.'
+                statecode:
+                  type: integer
+                  description: 'Status record (misal: 0 untuk Aktif, 1 untuk Tidak Aktif).'
+                ecom_startwork:
+                  type: string
+                  format: date
+                  description: 'Tanggal mulai bekerja (YYYY-MM-DD).'
+                ecom_jobtitle:
+                  type: string
+                  description: 'Jabatan karyawan.'
+                ecom_workexperience:
+                  type: string
+                  description: 'Pengalaman kerja karyawan.'
+                ecom_dateofemployment:
+                  type: string
+                  format: date
+                  description: 'Tanggal mulai bekerja (YYYY-MM-DD).'
+                ecom_emergencycontactname:
+                  type: string
+                  description: 'Nama kontak darurat.'
+                ecom_emergencycontactaddress:
+                  type: string
+                  description: 'Alamat kontak darurat.'
+                ecom_emergencycontractphonenumber:
+                  type: string
+                  description: 'Nomor telepon kontak darurat.'
+                ecom_relationship:
+                  type: string
+                  description: 'Hubungan dengan kontak darurat.'
+                ecom_address:
+                  type: string
+                  description: 'Alamat lengkap karyawan.'
+                ecom_ktpnumber:
+                  type: string
+                  description: 'Nomor KTP.'
+                ecom_npwpnumber:
+                  type: string
+                  description: 'Nomor NPWP.'
+                ecom_profilepicture:
+                  type: string
+                  format: uri
+                  description: 'URL gambar profil.'
+                ecom_bankaccountnumber:
+                  type: string
+                  description: 'Nomor rekening bank.'
+                ecom_bpjsnumber:
+                  type: string
+                  description: 'Nomor BPJS Kesehatan.'
+                ecom_insurancenumber:
+                  type: string
+                  description: 'Nomor asuransi lainnya.'
+                ecom_bpjstknumber:
+                  type: string
+                  description: 'Nomor BPJS Ketenagakerjaan.'
+                ecom_maritalstatus:
+                  type: integer
+                  description: 'Status pernikahan (misal: 1 untuk Lajang, 2 untuk Menikah).'
+                ecom_numberofdependent:
+                  type: integer
+                  description: 'Jumlah tanggungan.'
+                ecom_placeofbirth:
+                  type: string
+                  description: 'Tempat lahir.'
+                ecom_religion:
+                  type: string
+                  description: 'Agama.'
+                ecom_bankname:
+                  type: string
+                  description: 'Nama bank.'
+                ecom_personalemail:
+                  type: string
+                  format: email
+                  description: 'Email pribadi.'
+                ecom_workemail:
+                  type: string
+                  format: email
+                  description: 'Email kantor.'
+              example:
+                ecom_employeename: "Budi Santoso"
+                ecom_phonenumber: "081234567890"
+                ecom_jobtitle: "Senior Developer"
       responses:
         '200':
           description: Profil berhasil diperbarui.
