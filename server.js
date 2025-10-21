@@ -409,7 +409,6 @@ fastify.patch("/profile/:employeeId", { preValidation: [fastify.authenticate] },
   }
 
   const { employeeId } = req.params; // This is the personalinformationid (GUID)
-  fastify.log.info(`PATCH /profile/${employeeId} - req.body: ${JSON.stringify(req.body)}, Content-Type: ${req.headers['content-type']}`);
 
   try {
     const allowedFields = [
@@ -444,10 +443,10 @@ fastify.patch("/profile/:employeeId", { preValidation: [fastify.authenticate] },
     if (err.response && err.response.status === 404) {
       return reply.code(404).send({ message: `Personal information record with ID ${employeeId} not found.` });
     }
-    console.error("❌ Error updating profile:", err); // Log full error object for debugging
+    console.error("❌ Error updating profile:", err.response?.data || err.message);
     reply.status(500).send({
       error: "Failed to update profile",
-      details: err.response?.data?.error?.message || err.message || err.toString(),
+      details: err.response?.data?.error?.message || err.message,
     });
   }
 });
