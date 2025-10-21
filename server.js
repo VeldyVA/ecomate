@@ -307,6 +307,19 @@ fastify.decorate("authenticate", async (req, reply) => {
     return; // Sukses, lanjut ke handler
   }
 
+  // Fallback ke otentikasi via App Token
+  if (req.headers['x-app-token']) {
+    try {
+      const appToken = await getAppLevelDataverseToken();
+      if (req.headers['x-app-token'] === appToken) {
+        req.user = { role: 'admin' }; // Atau role yang sesuai
+        return; // Sukses, lanjut ke handler
+      }
+    } catch (error) {
+      return reply.code(500).send({ error: "Failed to validate app token" });
+    }
+  }
+
   // Jika keduanya gagal
   return reply.code(401).send({ error: "Not authenticated. Please login or provide an API Key." });
 });
@@ -315,6 +328,15 @@ fastify.decorate("authenticate", async (req, reply) => {
 // ==============================
 // 🔹 Endpoint
 // ==============================
+
+fastify.get("/app-token", async (req, reply) => {
+  try {
+    const token = await getAppLevelDataverseToken();
+    reply.send({ token });
+  } catch (error) {
+    reply.status(500).send({ error: "Failed to get app-level token" });
+  }
+});
 
 fastify.get("/whoami", { preValidation: [fastify.authenticate] }, async (request, reply) => {
   // Setelah middleware authenticate, req.user sudah pasti ada.
