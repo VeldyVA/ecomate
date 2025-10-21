@@ -409,6 +409,7 @@ fastify.patch("/profile/:employeeId", { preValidation: [fastify.authenticate] },
   }
 
   const { employeeId } = req.params; // This is the personalinformationid (GUID)
+  fastify.log.info(`PATCH /profile/${employeeId} - req.body: ${JSON.stringify(req.body)}, Content-Type: ${req.headers['content-type']}`);
 
   try {
     const allowedFields = [
