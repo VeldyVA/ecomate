@@ -411,24 +411,27 @@ fastify.patch("/profile/:employeeId", { preValidation: [fastify.authenticate] },
   const { employeeId } = req.params; 
 
   try {
-    const personalInfoData = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
+    const personalInfoData = await dataverseRequest(req, "get", "ecom_personalinformations", {
       params: {
-        $filter: `_ecom_fullname_value eq ${employeeId}`,
-        $select: "ecom_employeepersonalinformationid"
+        $filter: `ecom_workemail eq '${employeeEmail}'`,
+        $select: "ecom_personalinformationid",
       }
     });
 
     if (!personalInfoData.value || personalInfoData.value.length === 0) {
       return reply.code(404).send({ message: "Personal information record not found for this employee." });
     }
-    const personalInfoId = personalInfoData.value[0].ecom_employeepersonalinformationid;
+    const personalInfoId = personalInfoData.value[0].ecom_personalinformationid;
 
     const allowedFields = [
-      "ecom_gender", "ecom_dateofbirth", "ecom_phonenumber", "ecom_emergencycontactname",
-      "ecom_emergencycontactaddress", "ecom_emergencycontractphonenumber", "ecom_emergencycontactrelationship",
-      "ecom_address", "ecom_ktpnumber", "ecom_npwpnumber", "ecom_notes", "ecom_bankaccountnumber",
-      "ecom_bpjsnumber", "ecom_bpjstknumber", "ecom_maritalstatus", "ecom_numberofdependent",
-      "ecom_placeofbirth", "ecom_religion", "ecom_bankname", "ecom_personalemail", "ecom_workexperience"
+      "ecom_employeename", "ecom_gender", "ecom_dateofbirth",
+          "ecom_phonenumber", "statecode", "ecom_startwork", "ecom_jobtitle",
+          "ecom_workexperience", "ecom_dateofemployment",
+          "ecom_emergencycontactname", "ecom_emergencycontactaddress", "ecom_emergencycontractphonenumber",
+          "ecom_relationship", "ecom_address", "ecom_ktpnumber", "ecom_npwpnumber",
+          "ecom_profilepicture", "ecom_bankaccountnumber", "ecom_bpjsnumber", "ecom_insurancenumber",
+          "ecom_bpjstknumber", "ecom_maritalstatus", "ecom_numberofdependent", "ecom_placeofbirth",
+          "ecom_religion", "ecom_bankname", "ecom_personalemail", "ecom_workemail"
     ];
 
     const updates = {};
@@ -442,7 +445,7 @@ fastify.patch("/profile/:employeeId", { preValidation: [fastify.authenticate] },
         return reply.code(400).send({ message: "No valid fields to update were provided." });
     }
 
-    await dataverseRequest(req, "patch", `ecom_employeepersonalinformations(${personalInfoId})`, { data: updates });
+    await dataverseRequest(req, "patch", `ecom_personalinformations(${personalInfoId})`, { data: updates });
 
     return { message: "Profile updated successfully." };
 
@@ -454,8 +457,6 @@ fastify.patch("/profile/:employeeId", { preValidation: [fastify.authenticate] },
     });
   }
 });
-
-
 
 console.log("JWT_SECRET:", process.env.JWT_SECRET ? "Loaded" : "Not Found - Using Default");
 console.log("ADMIN_EMAILS:", process.env.ADMIN_EMAILS);
