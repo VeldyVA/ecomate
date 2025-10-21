@@ -1052,17 +1052,17 @@ fastify.get("/admin/leave-requests/search", { preValidation: [fastify.authentica
     }
 
     try {
-      const userData = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
+      const userData = await dataverseRequest(req, "get", "ecom_personalinformations", {
         params: {
           $filter: personalInfoFilter,
-          $select: "_ecom_fullname_value"
+          $select: "ecom_personalinformationid"
         }
       });
 
-      if (!userData.value || userData.value.length === 0 || !userData.value[0]._ecom_fullname_value) {
+      if (!userData.value || userData.value.length === 0 || !userData.value[0].ecom_personalinformationid) {
         return reply.code(404).send({ message: `Employee not found for the provided criteria.` });
       }
-      const foundEmployeeId = userData.value[0]._ecom_fullname_value;
+      const foundEmployeeId = userData.value[0].ecom_personalinformationid;
       employeeFilter = `_ecom_employee_value eq ${foundEmployeeId}`;
     } catch (err) {
       console.error("❌ Error fetching employee by email/name:", err.response?.data || err.message);
