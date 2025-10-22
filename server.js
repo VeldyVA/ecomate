@@ -6,11 +6,19 @@ import nodemailer from "nodemailer";
 import axios from "axios";
 import dotenv from "dotenv";
 import fs from "fs";
+import path from "path";
 import { ConfidentialClientApplication } from "@azure/msal-node";
 
 dotenv.config();
 
 const fastify = Fastify({ logger: true });
+
+// Create OTP directory if it doesn't exist
+const otpDir = 'otps';
+if (!fs.existsSync(otpDir)) {
+  fs.mkdirSync(otpDir, { recursive: true });
+  fastify.log.info(`Created directory for OTPs: ${otpDir}`);
+}
 
 // Register JWT plugin
 if (!process.env.JWT_SECRET) {
@@ -76,8 +84,7 @@ fastify.get("/login", async (req, reply) => {
 // ==============================
 // 🔹 OTP In-Memory Stores
 // ==============================
-const otpStore = {}; // For email-based OTPs: { email: { otp, expiresAt } }
-const tokenOtpStore = {}; // For token exchange: { otp: { jwt, expiresAt } }
+// Note: In-memory OTP stores were replaced with a file-based store to support multi-instance deployments.
 
 function generateOTP() {
   return Math.floor(100000 + Math.random() * 900000).toString();
@@ -140,8 +147,16 @@ fastify.get("/auth/callback", async (req, reply) => {
       // Buat OTP untuk ditukar dengan JWT
       const otp = generateOTP();
       const expiresAt = new Date(new Date().getTime() + 5 * 60000); // 5 menit
-      tokenOtpStore[otp] = { jwt: longLivedJwt, expiresAt };
-      console.log('OTP generated and stored:', tokenOtpStore);
+      const otpFilePath = path.join(otpDir, `${otp}.json`);
+      const otpData = JSON.stringify({ jwt: longLivedJwt, expiresAt: expiresAt.toISOString() });
+
+      try {
+        fs.writeFileSync(otpFilePath, otpData);
+        fastify.log.info(`OTP ${otp} stored in file.`);
+      } catch (writeErr) {
+        fastify.log.error("❌ Error writing OTP file:", writeErr);
+        return reply.status(500).send({ error: "Failed to store authentication session." });
+      }
 
       // Tampilkan halaman HTML dengan OTP
       reply.type('text/html').send(`
@@ -182,7 +197,6 @@ fastify.get("/auth/callback", async (req, reply) => {
 // 🔹 Endpoint Baru: Tukar OTP dengan API Key
 // ==============================
 fastify.post("/exchange-otp", async (req, reply) => {
-  console.log('Request to /exchange-otp. tokenOtpStore:', tokenOtpStore);
   let { otp } = req.body;
   if (!otp) {
     return reply.code(400).send({ error: "OTP is required." });
@@ -191,20 +205,39 @@ fastify.post("/exchange-otp", async (req, reply) => {
   // Handle OTP with or without hyphen
   otp = otp.replace(/-/g, "");
 
-  const stored = tokenOtpStore[otp];
+  const otpFilePath = path.join(otpDir, `${otp}.json`);
 
-  if (!stored || new Date() > stored.expiresAt) {
-    // Hapus OTP yang sudah expired
-    if (stored) delete tokenOtpStore[otp];
+  if (!fs.existsSync(otpFilePath)) {
     return reply.code(404).send({ error: "OTP not found or has expired." });
   }
 
-  const apiKey = stored.jwt;
+  try {
+    const otpData = JSON.parse(fs.readFileSync(otpFilePath, 'utf8'));
+    const expiresAt = new Date(otpData.expiresAt);
 
-  // Hapus OTP setelah berhasil digunakan
-  delete tokenOtpStore[otp];
+    if (new Date() > expiresAt) {
+      fs.unlinkSync(otpFilePath); // Clean up expired OTP
+      return reply.code(404).send({ error: "OTP not found or has expired." });
+    }
 
-  reply.send({ apiKey });
+    const apiKey = otpData.jwt;
+
+    // Hapus file OTP setelah berhasil digunakan
+    fs.unlinkSync(otpFilePath);
+
+    reply.send({ apiKey });
+  } catch (err) {
+    fastify.log.error(`❌ Error processing OTP ${otp}:`, err);
+    // Defensively try to delete the file if it still exists, as it might be corrupt
+    if (fs.existsSync(otpFilePath)) {
+      try {
+        fs.unlinkSync(otpFilePath);
+      } catch (unlinkErr) {
+        fastify.log.error(`❌ Failed to delete corrupt OTP file ${otpFilePath}:`, unlinkErr);
+      }
+    }
+    return reply.code(500).send({ error: "Failed to process OTP. The code may be invalid or already used." });
+  }
 });
 
 
