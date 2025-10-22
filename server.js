@@ -285,13 +285,16 @@ function isAdmin(email) {
 fastify.decorate("authenticate", async (req, reply) => {
   // Prioritaskan otentikasi via API Key (JWT) dari header
   if (req.headers.authorization) {
+    fastify.log.info("Authentication: Authorization header found.");
     const [type, token] = req.headers.authorization.split(' ') || [];
     if (type === 'Bearer' && token) {
       try {
         const decoded = fastify.jwt.verify(token);
         req.user = decoded; // payload JWT kita berisi: { employeeId, email, role }
+        fastify.log.info(`Authentication: JWT verified for user ${decoded.email} with role ${decoded.role}.`);
         return; // Sukses, lanjut ke handler
       } catch (err) {
+        fastify.log.warn(`Authentication: JWT verification failed: ${err.message}`);
         return reply.code(401).send({ error: "Invalid API Key." });
       }
     }
