@@ -940,16 +940,20 @@ if (!userRes.value?.length) {
   try {
     const flowUrl = process.env.POWERAPPS_FLOW_URL;
 
-    await fetch(flowUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        leaveId: leaveId,
-        userId: systemUserId,
-      }),
-    });
+    if (!flowUrl) {
+      fastify.log.error("❌ Configuration Error: POWERAPPS_FLOW_URL is not set in the environment. Skipping flow trigger.");
+    } else {
+      await fetch(flowUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          leaveId: leaveId,
+          userId: systemUserId,
+        }),
+      });
 
-    fastify.log.info(`✅ Flow triggered successfully for ${employeeEmail}`);
+      fastify.log.info(`✅ Flow triggered successfully for ${employeeEmail}`);
+    }
   } catch (flowErr) {
     fastify.log.error({
       msg: "❌ Failed to trigger Power Automate Flow",
