@@ -947,9 +947,10 @@ if (!userRes.value?.length) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          leaveId: leaveId,
-          userId: systemUserId,
-        }),
+        recordId: leaveId,
+        leaveId: leaveId,
+        systemuserid: systemUserId,
+      }),
       });
 
       fastify.log.info(`✅ Flow triggered successfully for ${employeeEmail}`);
