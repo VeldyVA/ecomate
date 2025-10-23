@@ -280,14 +280,21 @@ async function dataverseRequest(req, method, entitySet, options = {}) {
     token = await getAppLevelDataverseToken();
   }
 
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    Accept: "application/json",
+    "Content-Type": "application/json",
+  };
+
+  // Add Prefer header for POST requests to get the created record back
+  if (method.toLowerCase() === 'post') {
+    headers['Prefer'] = 'return=representation';
+  }
+
   const res = await axios({
     method,
     url: `${dataverseBaseUrl}/api/data/v9.2/${entitySet}`,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
+    headers: headers,
     data: options.data || undefined,
     params: options.params || undefined,
   });
