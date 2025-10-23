@@ -922,12 +922,48 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
 
     const inserted = await dataverseRequest(req, "post", "ecom_employeeleaves", { data: newLeaveRequest });
 
-    // === 8. Response sukses ===
-    return reply.code(201).send({
-      message: `Leave request submitted successfully.`,
-      balance_remaining: currentBalance - days,
-      data: inserted,
+    // === 8. Ambil systemuserid dari systemuser (berdasarkan email user) ===
+const userRes = await dataverseRequest(req, "get", "systemusers", {
+  params: {
+    $select: "systemuserid,internalemailaddress",
+    $filter: `internalemailaddress eq '${employeeEmail}'`,
+  },
+});
+
+if (!userRes.value?.length) {
+  fastify.log.warn(`⚠️ No systemuser found for ${employeeEmail}`);
+} else {
+  const systemUserId = userRes.value[0].systemuserid;
+  const leaveId = inserted.ecom_employeeleaveid; // ID dari record cuti baru
+
+  // === 9. Trigger Power Automate Flow ===
+  try {
+    const flowUrl = process.env.POWERAPPS_FLOW_URL;
+
+    await fetch(flowUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        leaveId: leaveId,
+        userId: systemUserId,
+      }),
     });
+
+    fastify.log.info(`✅ Flow triggered successfully for ${employeeEmail}`);
+  } catch (flowErr) {
+    fastify.log.error({
+      msg: "❌ Failed to trigger Power Automate Flow",
+      error: flowErr.message,
+    });
+  }
+}
+
+// === 10. Response sukses ===
+return reply.code(201).send({
+  message: `Leave request submitted successfully.`,
+  balance_remaining: currentBalance - days,
+  data: inserted,
+});
 
   } catch (err) {
     fastify.log.error({
