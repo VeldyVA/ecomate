@@ -954,9 +954,8 @@ if (!userRes.value?.length) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-        recordId: leaveId,
         leaveId: leaveId,
-        systemuserid: systemUserId,
+        userId: systemUserId,
       }),
       });
 
