@@ -566,6 +566,16 @@ function calculateEndDate(startDateStr, days) {
   return formatDateUTC(current);
 }
 
+function calculateReturnDate(endDateStr) {
+  let returnDate = parseDateUTC(endDateStr);
+  returnDate.setUTCDate(returnDate.getUTCDate() + 1); // Start with the day after end date
+
+  while (!isWorkday(returnDate)) {
+    returnDate.setUTCDate(returnDate.getUTCDate() + 1);
+  }
+  return formatDateUTC(returnDate);
+}
+
 // ==============================
 // 🔹 Cuti: Get Saldo Cuti User
 // ==============================
@@ -910,6 +920,7 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
       if (d !== 0 && d !== 6) daysAdded++;
     }
     const endDateStr = endDate.toISOString().split("T")[0];
+    const returnDateStr = calculateReturnDate(endDateStr); // Calculate return date
 
     // === 7. Insert ke ecom_employeeleaves ===
     const newLeaveRequest = {
@@ -920,6 +931,7 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
       ecom_name: `${employeeInfo.ecom_nik} - ${employeeInfo.ecom_employeename} - Leave request`,
       ecom_startdate: startDate,
       ecom_enddate: endDateStr,
+      ecom_returndate: returnDateStr, // Add return date
       ecom_numberofdays: days,
       ecom_reason: reason || null
     };;
