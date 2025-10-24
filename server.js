@@ -921,9 +921,8 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
       ecom_startdate: startDate,
       ecom_enddate: endDateStr,
       ecom_numberofdays: days,
-      ecom_reason: reason || null,
-      ecom_leavestatus: 273700005, // Draft
-    };
+      ecom_reason: reason || null
+    };;
 
     const inserted = await dataverseRequest(req, "post", "ecom_employeeleaves", { data: newLeaveRequest });
 
