@@ -997,6 +997,20 @@ try {
   fastify.log.error("❌ Failed to link leave balances:", err.message);
 }
 
+  // === 8.6. Tambahan untuk pastikan nilai numerik tidak null ===
+try {
+  // Pastikan field total days tidak null
+  await dataverseRequest(req, "patch", `ecom_employeeleaves(${inserted.ecom_employeeleaveid})`, {
+    data: {
+      ecom_totaldaysthisperiod: days, // misal default isi semua ke periode ini
+      ecom_totaldaysnextperiod: 0
+    },
+  });
+  fastify.log.info(`🧮 Set totaldaysthisperiod=${days}, totaldaysnextperiod=0 for ${inserted.ecom_employeeleaveid}`);
+} catch (numErr) {
+  fastify.log.error("❌ Failed to set totalday fields:", numErr.message);
+}
+
   // === 9. Trigger Power Automate Flow ===
   try {
     const flowUrl = process.env.POWERAPPS_FLOW_URL;
