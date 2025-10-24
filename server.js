@@ -947,6 +947,10 @@ if (!userRes.value?.length) {
     if (!flowUrl) {
       fastify.log.error("❌ Configuration Error: POWERAPPS_FLOW_URL is not set in the environment. Skipping flow trigger.");
     } else {
+
+    // Delay 1 detik
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
       await fetch(flowUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
