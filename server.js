@@ -952,6 +952,51 @@ if (!userRes.value?.length) {
   const systemUserId = userRes.value[0].systemuserid;
   const leaveId = inserted.ecom_employeeleaveid; // ID dari record cuti baru
 
+  // === 8.5. Hubungkan leave request ke leave balance ===
+try {
+  const leaveYear = start.getUTCFullYear().toString();
+
+  const [balanceThis, balanceNext] = await Promise.all([
+    dataverseRequest(req, "get", "ecom_leaveusages", {
+      params: {
+        $filter: `_ecom_employee_value eq ${employeeGuid} and ecom_period eq '${leaveYear}'`,
+        $select: "ecom_leaveusageid",
+      },
+    }),
+    dataverseRequest(req, "get", "ecom_leaveusages", {
+      params: {
+        $filter: `_ecom_employee_value eq ${employeeGuid} and ecom_period eq '${parseInt(leaveYear) + 1}'`,
+        $select: "ecom_leaveusageid",
+      },
+    }),
+  ]);
+
+  const thisBalanceId = balanceThis.value?.[0]?.ecom_leaveusageid;
+  const nextBalanceId = balanceNext.value?.[0]?.ecom_leaveusageid;
+
+  if (thisBalanceId || nextBalanceId) {
+    await dataverseRequest(req, "patch", `ecom_employeeleaves(${inserted.ecom_employeeleaveid})`, {
+      data: {
+        ...(thisBalanceId && {
+          "ecom_LeaveBalanceThisPeriod@odata.bind": `/ecom_leaveusages(${thisBalanceId})`,
+        }),
+        ...(nextBalanceId && {
+          "ecom_LeaveBalanceNextPeriod@odata.bind": `/ecom_leaveusages(${nextBalanceId})`,
+        }),
+      },
+    });
+    fastify.log.info(
+      `✅ Linked leave request ${inserted.ecom_employeeleaveid} to balance(s): ${thisBalanceId || "-"} / ${nextBalanceId || "-"}`
+    );
+  } else {
+    fastify.log.warn(
+      `⚠️ No leave balance records found for ${employeeGuid} (${leaveYear}/${parseInt(leaveYear) + 1}). Flow may fail.`
+    );
+  }
+} catch (err) {
+  fastify.log.error("❌ Failed to link leave balances:", err.message);
+}
+
   // === 9. Trigger Power Automate Flow ===
   try {
     const flowUrl = process.env.POWERAPPS_FLOW_URL;
