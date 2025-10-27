@@ -1137,7 +1137,7 @@ fastify.post("/leave/requests/special", { preValidation: [fastify.authenticate] 
     // 4b. Get leave already taken this year for this type
     const pastLeaves = await dataverseRequest(req, "get", "ecom_employeeleaves", {
         params: {
-            $filter: `_ecom_employee_value eq ${employeeGuid} and _ecom_leavetype_value eq ${leaveTypeId} and startswith(ecom_startdate, '${leaveYear}') and (ecom_leavestatus ne 273700003 and ecom_leavestatus ne 273700004)`, // Not 'Rejected' or 'Cancelled'
+            $filter: `_ecom_employee_value eq ${employeeGuid} and _ecom_leavetype_value eq ${leaveTypeId} and year(ecom_startdate) eq ${leaveYear} and (ecom_leavestatus ne 273700003 and ecom_leavestatus ne 273700004)`, // Not 'Rejected' or 'Cancelled'
             $select: "ecom_numberofdays"
         }
     });
