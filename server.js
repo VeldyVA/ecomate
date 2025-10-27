@@ -29,6 +29,10 @@ fastify.register(jwt, {
   secret: process.env.JWT_SECRET,
 });
 
+// Temporary log for debugging JWT_SECRET
+const loadedSecret = process.env.JWT_SECRET || "";
+fastify.log.info(`JWT_SECRET check -> Starts: [${loadedSecret.substring(0, 8)}], Ends: [${loadedSecret.slice(-8)}]`);
+
 fastify.register(fastifyCookie);
 fastify.register(fastifySession, {
   secret: process.env.SESSION_SECRET || "a-super-secret-for-sessions-that-is-long",
