@@ -14,7 +14,7 @@ dotenv.config();
 const fastify = Fastify({ logger: true });
 
 // Create OTP directory if it doesn't exist
-const otpDir = 'otps';
+const otpDir = path.join('/tmp', 'otps');
 if (!fs.existsSync(otpDir)) {
   fs.mkdirSync(otpDir, { recursive: true });
   fastify.log.info(`Created directory for OTPs: ${otpDir}`);
