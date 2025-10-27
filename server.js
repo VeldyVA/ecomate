@@ -70,6 +70,11 @@ const cca = new ConfidentialClientApplication({
   }
 });
 
+// Redirect root to /login
+fastify.get("/", async (req, reply) => {
+  reply.redirect("/login");
+});
+
 // Redirect user ke login Azure
 fastify.get("/login", async (req, reply) => {
   const authCodeUrlParameters = {
