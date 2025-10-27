@@ -1070,6 +1070,196 @@ return reply.code(201).send({
 });
 
 // ==============================
+// 🔹 Cuti: Apply for Special Leave (Quota-based, no balance check)
+// ==============================
+fastify.post("/leave/requests/special", { preValidation: [fastify.authenticate] }, async (req, reply) => {
+  const { leave_typeid: leaveTypeId, start_date: startDate, days, reason } = req.body;
+  const employeeEmail = req.user.email;
+
+  // === 1. Validasi input dasar ===
+  if (!leaveTypeId || !startDate || !days) {
+    return reply.code(400).send({ message: "leaveTypeId, startDate, and days are required." });
+  }
+
+  if (!Number.isInteger(days) || days <= 0) {
+    return reply.code(400).send({ message: "'days' must be a positive integer." });
+  }
+
+  // === 2. Validasi tanggal mulai ===
+  let start;
+  try {
+    start = new Date(startDate);
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+
+    if (start < today) return reply.code(400).send({ message: "Start date cannot be in the past." });
+
+    const dayOfWeek = start.getUTCDay();
+    if (dayOfWeek === 0 || dayOfWeek === 6) {
+      return reply.code(400).send({ message: `Start date ${startDate} falls on a weekend.` });
+    }
+  } catch {
+    return reply.code(400).send({ message: "Invalid startDate format. Use YYYY-MM-DD." });
+  }
+
+  try {
+    const leaveYear = start.getUTCFullYear().toString();
+
+    // === 3. Ambil GUID karyawan dari email ===
+    const personalInfoRes = await dataverseRequest(req, "get", "ecom_personalinformations", {
+      params: {
+        $filter: `ecom_workemail eq '${employeeEmail}'`,
+        $select: "ecom_personalinformationid,ecom_workemail,ecom_employeename,ecom_nik",
+      },
+    });
+
+    if (!personalInfoRes.value?.length) {
+      return reply.code(404).send({ message: `No personal record found for ${employeeEmail}.` });
+    }
+
+    const sortedPersonal = personalInfoRes.value.sort((a, b) =>
+      (b.ecom_employeename || "").localeCompare(a.ecom_employeename || "")
+    );
+    const employeeInfo = sortedPersonal[0];
+    const employeeGuid = employeeInfo.ecom_personalinformationid;
+
+    // === 4. NEW LOGIC: Validasi Kouta (bukan saldo) ===
+    // 4a. Get leave type quota
+    const leaveTypeInfo = await dataverseRequest(req, "get", `ecom_leavetypes(${leaveTypeId})`, {
+        params: { $select: "ecom_quota,ecom_name" }
+    });
+
+    if (leaveTypeInfo.ecom_quota == null) {
+        return reply.code(400).send({ message: `Leave type '${leaveTypeInfo.ecom_name}' does not use a quota system.` });
+    }
+    const quota = leaveTypeInfo.ecom_quota;
+
+    // 4b. Get leave already taken this year for this type
+    const pastLeaves = await dataverseRequest(req, "get", "ecom_employeeleaves", {
+        params: {
+            $filter: `_ecom_employee_value eq ${employeeGuid} and _ecom_leavetype_value eq ${leaveTypeId} and startswith(ecom_startdate, '${leaveYear}') and (ecom_leavestatus ne 273700003 and ecom_leavestatus ne 273700004)`, // Not 'Rejected' or 'Cancelled'
+            $select: "ecom_numberofdays"
+        }
+    });
+    const daysAlreadyTaken = pastLeaves.value.reduce((sum, leave) => sum + leave.ecom_numberofdays, 0);
+
+    // 4c. Validate against quota
+    if ((daysAlreadyTaken + days) > quota) {
+        return reply.code(400).send({
+            message: `Request exceeds quota for '${leaveTypeInfo.ecom_name}'.`,
+            quota: quota,
+            already_taken: daysAlreadyTaken,
+            requested: days
+        });
+    }
+
+    // === 5. Hitung end date (Logic from original endpoint) ===
+    const endDate = new Date(start);
+    let daysAdded = 0;
+    while (daysAdded < days - 1) {
+      endDate.setUTCDate(endDate.getUTCDate() + 1);
+      const d = endDate.getUTCDay();
+      if (d !== 0 && d !== 6) daysAdded++;
+    }
+    const endDateStr = endDate.toISOString().split("T")[0];
+    const returnDateStr = calculateReturnDate(endDateStr);
+
+    // === 6. Insert ke ecom_employeeleaves (Logic from original endpoint) ===
+    const newLeaveRequest = {
+      "ecom_Employee@odata.bind": `/ecom_personalinformations(${employeeGuid})`,
+      "ecom_LeaveType@odata.bind": `/ecom_leavetypes(${leaveTypeId})`,
+      ecom_name: `${employeeInfo.ecom_nik} - ${employeeInfo.ecom_employeename} - Leave request`,
+      ecom_startdate: startDate,
+      ecom_enddate: endDateStr,
+      ecom_returndate: returnDateStr,
+      ecom_numberofdays: days,
+      ecom_reason: reason || null
+    };
+
+    const inserted = await dataverseRequest(req, "post", "ecom_employeeleaves", { data: newLeaveRequest });
+
+    // === 7. Trigger Power Automate (Logic from original endpoint) ===
+    const userRes = await dataverseRequest(req, "get", "systemusers", {
+        params: {
+            $select: "systemuserid,internalemailaddress",
+            $filter: `internalemailaddress eq '${employeeEmail}'`,
+        },
+    });
+
+    if (!userRes.value?.length) {
+        fastify.log.warn(`⚠️ No systemuser found for ${employeeEmail}`);
+    } else {
+        const systemUserId = userRes.value[0].systemuserid;
+        const leaveId = inserted.ecom_employeeleaveid;
+
+        // Link to leave balance (optional, can be removed if not needed for special leaves)
+        try {
+            const leaveYear = start.getUTCFullYear().toString();
+            const [balanceThis, balanceNext] = await Promise.all([
+                dataverseRequest(req, "get", "ecom_leaveusages", { params: { $filter: `_ecom_employee_value eq ${employeeGuid} and ecom_period eq '${leaveYear}'`, $select: "ecom_leaveusageid" } }),
+                dataverseRequest(req, "get", "ecom_leaveusages", { params: { $filter: `_ecom_employee_value eq ${employeeGuid} and ecom_period eq '${parseInt(leaveYear) + 1}'`, $select: "ecom_leaveusageid" } })
+            ]);
+            const thisBalanceId = balanceThis.value?.[0]?.ecom_leaveusageid;
+            const nextBalanceId = balanceNext.value?.[0]?.ecom_leaveusageid;
+            if (thisBalanceId || nextBalanceId) {
+                await dataverseRequest(req, "patch", `ecom_employeeleaves(${inserted.ecom_employeeleaveid})`, {
+                    data: {
+                        ...(thisBalanceId && { "ecom_LeaveBalanceThisPeriod@odata.bind": `/ecom_leaveusages(${thisBalanceId})` }),
+                        ...(nextBalanceId && { "ecom_LeaveBalanceNextPeriod@odata.bind": `/ecom_leaveusages(${nextBalanceId})` })
+                    }
+                });
+                fastify.log.info(`✅ Linked special leave request ${inserted.ecom_employeeleaveid} to balance records.`);
+            }
+        } catch (err) {
+            fastify.log.error("❌ Failed to link special leave to balances:", err.message);
+        }
+
+        // Set total days (can be adjusted if logic differs for special leaves)
+        try {
+            await dataverseRequest(req, "patch", `ecom_employeeleaves(${inserted.ecom_employeeleaveid})`, {
+                data: { ecom_totaldaysthisperiod: days, ecom_totaldaysnextperiod: 0 }
+            });
+            fastify.log.info(`🧮 Set totaldaysthisperiod=${days} for special leave ${inserted.ecom_employeeleaveid}`);
+        } catch (numErr) {
+            fastify.log.error("❌ Failed to set totalday fields for special leave:", numErr.message);
+        }
+
+        // Trigger Power Automate Flow
+        try {
+            const flowUrl = process.env.POWERAPPS_FLOW_URL;
+            if (!flowUrl) {
+                fastify.log.error("❌ POWERAPPS_FLOW_URL is not set. Skipping flow trigger.");
+            } else {
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                await fetch(flowUrl, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ leaveId: leaveId, userId: systemUserId })
+                });
+                fastify.log.info(`✅ Flow triggered successfully for special leave for ${employeeEmail}`);
+            }
+        } catch (flowErr) {
+            fastify.log.error({ msg: "❌ Failed to trigger Power Automate Flow for special leave", error: flowErr.message });
+        }
+    }
+
+    // === 8. Response sukses ===
+    return reply.code(201).send({
+        message: `Special leave request submitted successfully.`, // Modified message
+        data: inserted,
+    });
+
+  } catch (err) {
+    fastify.log.error({ msg: "❌ Failed to apply for special leave", error: err.response?.data || err.message });
+    reply.code(500).send({
+      error: "Failed to apply for special leave",
+      details: err.response?.data?.error?.message || err.message,
+    });
+  }
+});
+
+
+// ==============================
 // 🔹 Cuti: Cancel a Leave Request (Final Version - Clean & Safe)
 // ==============================
 fastify.post("/leave/requests/:leaveId/cancel", { preValidation: [fastify.authenticate] }, async (req, reply) => {
