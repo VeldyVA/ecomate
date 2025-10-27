@@ -409,6 +409,48 @@ paths:
         '404':
           description: Jenis cuti atau data saldo tidak ditemukan.
 
+  /leave/requests/special:
+    post:
+      summary: Apply for Special Leave (Quota-based)
+      description: Mengajukan permintaan cuti khusus (di luar cuti tahunan) yang validasinya berdasarkan kuota, bukan sisa saldo. Contoh: Cuti Sakit, Cuti Menikah.
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                leaveTypeId:
+                  type: string
+                  format: uuid
+                  description: "ID dari jenis cuti yang ingin diambil."
+                startDate:
+                  type: string
+                  format: date
+                  description: "Tanggal mulai cuti (YYYY-MM-DD)."
+                days:
+                  type: integer
+                  description: "Jumlah hari cuti yang ingin diambil."
+                reason:
+                  type: string
+                  description: "Alasan mengambil cuti (opsional)."
+              required:
+                - leaveTypeId
+                - startDate
+                - days
+      responses:
+        '201':
+          description: Permintaan cuti khusus berhasil dibuat.
+        '400':
+          description: Input tidak valid (misal: tanggal di masa lalu, atau kuota tidak mencukupi).
+        '401':
+          description: Tidak terautentikasi.
+        '404':
+          description: Jenis cuti tidak ditemukan.
+
   /leave/requests/{leaveId}/cancel:
     post:
       summary: Cancel a Leave Request
