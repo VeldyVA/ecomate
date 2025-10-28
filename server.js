@@ -585,6 +585,38 @@ function calculateReturnDate(endDateStr) {
   return formatDateUTC(returnDate);
 }
 
+async function checkForOverlappingLeave(req, employeeGuid, newStartDate, newEndDate) {
+    const newStart = new Date(newStartDate);
+    const newEnd = new Date(newEndDate);
+
+    // Status: Waiting for PM/SM/SPV, Waiting for HR, Approved
+    const activeStatuses = [273700000, 273700001, 273700002];
+    const statusFilter = activeStatuses.map(s => `ecom_leavestatus eq ${s}`).join(' or ');
+
+    const existingLeaves = await dataverseRequest(req, "get", "ecom_employeeleaves", {
+        params: {
+            $filter: `_ecom_employee_value eq ${employeeGuid} and (${statusFilter})`,
+            $select: "ecom_startdate,ecom_enddate"
+        }
+    });
+
+    if (!existingLeaves.value || existingLeaves.value.length === 0) {
+        return null; // No active leaves, no overlap
+    }
+
+    for (const leave of existingLeaves.value) {
+        const existingStart = new Date(leave.ecom_startdate);
+        const existingEnd = new Date(leave.ecom_enddate);
+
+        // Check for overlap: (StartA <= EndB) and (EndA >= StartB)
+        if (newStart <= existingEnd && newEnd >= existingStart) {
+            return `Overlaps with existing leave from ${leave.ecom_startdate} to ${leave.ecom_enddate}.`;
+        }
+    }
+
+    return null; // No overlap found
+}
+
 // ==============================
 // 🔹 Cuti: Get Saldo Cuti User
 // ==============================
@@ -875,7 +907,7 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
     const personalInfoRes = await dataverseRequest(req, "get", "ecom_personalinformations", {
       params: {
         $filter: `ecom_workemail eq '${employeeEmail}'`,
-        $select: "ecom_personalinformationid,ecom_workemail,ecom_employeename,ecom_nik",
+        $select: "ecom_personalinformationid,ecom_workemail,ecom_employeename,ecom_nik,ecom_dateofemployment",
       },
     });
 
@@ -929,7 +961,13 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
       if (d !== 0 && d !== 6) daysAdded++;
     }
     const endDateStr = endDate.toISOString().split("T")[0];
-    const returnDateStr = calculateReturnDate(endDateStr); // Calculate return date
+    const returnDateStr = calculateReturnDate(endDateStr);
+
+    // === 6.5 Validasi Tumpang Tindih (Overlap) ===
+    const overlapError = await checkForOverlappingLeave(req, employeeGuid, startDate, endDateStr);
+    if (overlapError) {
+        return reply.code(400).send({ message: "The requested leave dates overlap with an existing leave request.", details: overlapError });
+    }
 
     // === 7. Insert ke ecom_employeeleaves ===
     const newLeaveRequest = {
@@ -1103,13 +1141,11 @@ fastify.post("/leave/requests/special", { preValidation: [fastify.authenticate] 
   }
 
   try {
-    const leaveYear = start.getUTCFullYear().toString();
-
-    // === 3. Ambil GUID karyawan dari email ===
+    // === 3. Ambil info karyawan & tipe cuti ===
     const personalInfoRes = await dataverseRequest(req, "get", "ecom_personalinformations", {
       params: {
         $filter: `ecom_workemail eq '${employeeEmail}'`,
-        $select: "ecom_personalinformationid,ecom_workemail,ecom_employeename,ecom_nik",
+        $select: "ecom_personalinformationid,ecom_workemail,ecom_employeename,ecom_nik,ecom_dateofemployment",
       },
     });
 
@@ -1117,43 +1153,100 @@ fastify.post("/leave/requests/special", { preValidation: [fastify.authenticate] 
       return reply.code(404).send({ message: `No personal record found for ${employeeEmail}.` });
     }
 
-    const sortedPersonal = personalInfoRes.value.sort((a, b) =>
-      (b.ecom_employeename || "").localeCompare(a.ecom_employeename || "")
-    );
-    const employeeInfo = sortedPersonal[0];
+    const employeeInfo = personalInfoRes.value.sort((a, b) => (b.ecom_employeename || "").localeCompare(a.ecom_employeename || ""))[0];
     const employeeGuid = employeeInfo.ecom_personalinformationid;
 
-    // === 4. NEW LOGIC: Validasi Kouta (bukan saldo) ===
-    // 4a. Get leave type quota
     const leaveTypeInfo = await dataverseRequest(req, "get", `ecom_leavetypes(${leaveTypeId})`, {
         params: { $select: "ecom_quota,ecom_name" }
     });
 
-    if (leaveTypeInfo.ecom_quota == null) {
-        return reply.code(400).send({ message: `Leave type '${leaveTypeInfo.ecom_name}' does not use a quota system.` });
-    }
-    const quota = leaveTypeInfo.ecom_quota;
+    // === 4. LOGIKA INTI: Cuti Panjang vs Cuti Khusus Lainnya ===
+    if (leaveTypeInfo.ecom_name === 'Cuti Panjang') {
+        // --- VALIDASI CUTI PANJANG ---
+        fastify.log.info("Applying Long Leave validation logic.");
 
-    // 4b. Get leave already taken this year for this type
-    const pastLeaves = await dataverseRequest(req, "get", "ecom_employeeleaves", {
-        params: {
-            $filter: `_ecom_employee_value eq ${employeeGuid} and _ecom_leavetype_value eq ${leaveTypeId} and createdon ge ${leaveYear}-01-01T00:00:00Z and createdon le ${leaveYear}-12-31T23:59:59Z and (ecom_leavestatus ne 273700003 and ecom_leavestatus ne 273700004)`, // Not 'Rejected' or 'Cancelled'
-            $select: "ecom_numberofdays"
+        // Aturan 1: Maks 10 hari per pengambilan
+        if (days > 10) {
+            return reply.code(400).send({ message: "Long leave can only be taken for a maximum of 10 days per request." });
         }
-    });
-    const daysAlreadyTaken = pastLeaves.value.reduce((sum, leave) => sum + leave.ecom_numberofdays, 0);
 
-    // 4c. Validate against quota
-    if ((daysAlreadyTaken + days) > quota) {
-        return reply.code(400).send({
-            message: `Request exceeds quota for '${leaveTypeInfo.ecom_name}'.`,
-            quota: quota,
-            already_taken: daysAlreadyTaken,
-            requested: days
+        const employmentDate = new Date(employeeInfo.ecom_dateofemployment);
+        if (!employmentDate) {
+            return reply.code(404).send({ message: "Employee employment date is not set." });
+        }
+
+        const today = new Date();
+        const tenureInYears = (today.getTime() - employmentDate.getTime()) / (1000 * 60 * 60 * 24 * 365.25);
+
+        // Aturan 2: Masa kerja minimal 5 tahun
+        if (tenureInYears < 5) {
+            return reply.code(403).send({ message: `Not eligible for long leave. Minimum 5 years of service required. Your tenure: ${tenureInYears.toFixed(1)} years.` });
+        }
+
+        const currentTier = Math.floor(tenureInYears / 5) * 5;
+        if (currentTier < 5) { // Double check, should be covered by tenure check
+             return reply.code(403).send({ message: "Not eligible for any long leave tier." });
+        }
+
+        const eligibilityStartDate = new Date(employmentDate);
+        eligibilityStartDate.setFullYear(eligibilityStartDate.getFullYear() + currentTier);
+
+        const expirationDate = new Date(eligibilityStartDate);
+        expirationDate.setFullYear(expirationDate.getFullYear() + 3);
+
+        // Aturan 3: Cek masa hangus
+        if (today > expirationDate) {
+            return reply.code(403).send({ message: `Long leave for the ${currentTier}-year service period has expired on ${expirationDate.toISOString().split('T')[0]}.` });
+        }
+        
+        // Aturan 4: Cek kuota & cicilan dalam jendela kelayakan
+        const windowStartFilter = eligibilityStartDate.toISOString();
+        const pastLongLeavesInWindow = await dataverseRequest(req, "get", "ecom_employeeleaves", {
+            params: {
+                $filter: `_ecom_employee_value eq ${employeeGuid} and _ecom_leavetype_value eq ${leaveTypeId} and createdon ge ${windowStartFilter} and (ecom_leavestatus ne 273700003 and ecom_leavestatus ne 273700004)`,
+                $select: "ecom_numberofdays"
+            }
         });
+
+        const daysTakenInWindow = pastLongLeavesInWindow.value.reduce((sum, leave) => sum + leave.ecom_numberofdays, 0);
+
+        if ((daysTakenInWindow + days) > 20) {
+            return reply.code(400).send({
+                message: "Request exceeds the 20-day total quota for the current eligibility window.",
+                total_quota: 20,
+                taken_in_window: daysTakenInWindow,
+                requested: days
+            });
+        }
+
+    } else {
+        // --- VALIDASI CUTI KHUSUS LAINNYA ---
+        fastify.log.info("Applying simple quota validation logic.");
+        if (leaveTypeInfo.ecom_quota == null) {
+            return reply.code(400).send({ message: `Leave type '${leaveTypeInfo.ecom_name}' does not use a quota system.` });
+        }
+        const quota = leaveTypeInfo.ecom_quota;
+        const leaveYear = start.getUTCFullYear().toString();
+
+        const pastLeaves = await dataverseRequest(req, "get", "ecom_employeeleaves", {
+            params: {
+                $filter: `_ecom_employee_value eq ${employeeGuid} and _ecom_leavetype_value eq ${leaveTypeId} and createdon ge ${leaveYear}-01-01T00:00:00Z and createdon le ${leaveYear}-12-31T23:59:59Z and (ecom_leavestatus ne 273700003 and ecom_leavestatus ne 273700004)`,
+                $select: "ecom_numberofdays"
+            }
+        });
+        const daysAlreadyTaken = pastLeaves.value.reduce((sum, leave) => sum + leave.ecom_numberofdays, 0);
+
+        if ((daysAlreadyTaken + days) > quota) {
+            return reply.code(400).send({
+                message: `Request exceeds quota for '${leaveTypeInfo.ecom_name}'.`,
+                quota: quota,
+                already_taken: daysAlreadyTaken,
+                requested: days
+            });
+        }
     }
 
-    // === 5. Hitung end date (Logic from original endpoint) ===
+    // === 5. Hitung end date ===
     const endDate = new Date(start);
     let daysAdded = 0;
     while (daysAdded < days - 1) {
@@ -1164,7 +1257,13 @@ fastify.post("/leave/requests/special", { preValidation: [fastify.authenticate] 
     const endDateStr = endDate.toISOString().split("T")[0];
     const returnDateStr = calculateReturnDate(endDateStr);
 
-    // === 6. Insert ke ecom_employeeleaves (Logic from original endpoint) ===
+    // === 5.5 Validasi Tumpang Tindih (Overlap) [BUG FIX] ===
+    const overlapError = await checkForOverlappingLeave(req, employeeGuid, startDate, endDateStr);
+    if (overlapError) {
+        return reply.code(400).send({ message: "The requested leave dates overlap with an existing leave request.", details: overlapError });
+    }
+
+    // === 6. Insert ke ecom_employeeleaves ===
     const newLeaveRequest = {
       "ecom_Employee@odata.bind": `/ecom_personalinformations(${employeeGuid})`,
       "ecom_LeaveType@odata.bind": `/ecom_leavetypes(${leaveTypeId})`,
@@ -1178,7 +1277,7 @@ fastify.post("/leave/requests/special", { preValidation: [fastify.authenticate] 
 
     const inserted = await dataverseRequest(req, "post", "ecom_employeeleaves", { data: newLeaveRequest });
 
-    // === 7. Trigger Power Automate (Logic from original endpoint) ===
+    // === 7. Trigger Power Automate ===
     const userRes = await dataverseRequest(req, "get", "systemusers", {
         params: {
             $select: "systemuserid,internalemailaddress",
@@ -1192,7 +1291,6 @@ fastify.post("/leave/requests/special", { preValidation: [fastify.authenticate] 
         const systemUserId = userRes.value[0].systemuserid;
         const leaveId = inserted.ecom_employeeleaveid;
 
-        // Link to leave balance (optional, can be removed if not needed for special leaves)
         try {
             const leaveYear = start.getUTCFullYear().toString();
             const [balanceThis, balanceNext] = await Promise.all([
@@ -1208,23 +1306,21 @@ fastify.post("/leave/requests/special", { preValidation: [fastify.authenticate] 
                         ...(nextBalanceId && { "ecom_LeaveBalanceNextPeriod@odata.bind": `/ecom_leaveusages(${nextBalanceId})` })
                     }
                 });
-                fastify.log.info(`✅ Linked special leave request ${inserted.ecom_employeeleaveid} to balance records.`);
+                fastify.log.info(`✅ Linked leave request ${inserted.ecom_employeeleaveid} to balance records.`);
             }
         } catch (err) {
-            fastify.log.error("❌ Failed to link special leave to balances:", err.message);
+            fastify.log.error("❌ Failed to link leave to balances:", err.message);
         }
 
-        // Set total days (can be adjusted if logic differs for special leaves)
         try {
             await dataverseRequest(req, "patch", `ecom_employeeleaves(${inserted.ecom_employeeleaveid})`, {
                 data: { ecom_totaldaysthisperiod: days, ecom_totaldaysnextperiod: 0 }
             });
-            fastify.log.info(`🧮 Set totaldaysthisperiod=${days} for special leave ${inserted.ecom_employeeleaveid}`);
+            fastify.log.info(`🧮 Set totaldaysthisperiod=${days} for leave ${inserted.ecom_employeeleaveid}`);
         } catch (numErr) {
-            fastify.log.error("❌ Failed to set totalday fields for special leave:", numErr.message);
+            fastify.log.error("❌ Failed to set totalday fields:", numErr.message);
         }
 
-        // Trigger Power Automate Flow
         try {
             const flowUrl = process.env.POWERAPPS_FLOW_URL;
             if (!flowUrl) {
@@ -1236,16 +1332,16 @@ fastify.post("/leave/requests/special", { preValidation: [fastify.authenticate] 
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ leaveId: leaveId, userId: systemUserId })
                 });
-                fastify.log.info(`✅ Flow triggered successfully for special leave for ${employeeEmail}`);
+                fastify.log.info(`✅ Flow triggered successfully for ${employeeEmail}`);
             }
         } catch (flowErr) {
-            fastify.log.error({ msg: "❌ Failed to trigger Power Automate Flow for special leave", error: flowErr.message });
+            fastify.log.error({ msg: "❌ Failed to trigger Power Automate Flow", error: flowErr.message });
         }
     }
 
     // === 8. Response sukses ===
     return reply.code(201).send({
-        message: `Special leave request submitted successfully.`, // Modified message
+        message: `Leave request submitted successfully.`,
         data: inserted,
     });
 
