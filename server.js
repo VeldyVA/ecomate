@@ -975,7 +975,7 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
       "ecom_Employee@odata.bind": `/ecom_personalinformations(${employeeGuid})`,
       "ecom_LeaveType@odata.bind": `/ecom_leavetypes(${leaveTypeId})`,
       // Format ecom_name sesuai contoh Anda
-      ecom_name: `${employeeInfo.ecom_nik} - ${employeeInfo.ecom_employeename} - Leave request`,
+      ecom_name: `${employeeInfo.ecom_nik} - ${employeeInfo.com_employeename} - Leave request`,
       ecom_startdate: startDate,
       ecom_enddate: endDateStr,
       ecom_returndate: returnDateStr, // Add return date
@@ -1161,41 +1161,45 @@ fastify.post("/leave/requests/special", { preValidation: [fastify.authenticate] 
     });
 
     // === 4. LOGIKA INTI: Cuti Panjang vs Cuti Khusus Lainnya ===
-    if (leaveTypeInfo.ecom_name === 'Cuti Panjang') {
+    const isLongLeave = leaveTypeInfo.ecom_name === 'Cuti Panjang';
+    fastify.log.info({ leaveTypeName: leaveTypeInfo.ecom_name, isLongLeave }, "DEBUG: Checking leave type");
+
+    if (isLongLeave) {
         // --- VALIDASI CUTI PANJANG ---
-        fastify.log.info("Applying Long Leave validation logic.");
+        fastify.log.info({ requestedDays: days }, "DEBUG: Applying Long Leave validation logic.");
 
         // Aturan 1: Maks 10 hari per pengambilan
         if (days > 10) {
+            fastify.log.warn("DEBUG: Failed rule - days > 10");
             return reply.code(400).send({ message: "Long leave can only be taken for a maximum of 10 days per request." });
         }
 
         const employmentDate = new Date(employeeInfo.ecom_dateofemployment);
-        if (!employmentDate) {
-            return reply.code(404).send({ message: "Employee employment date is not set." });
+        if (isNaN(employmentDate.getTime())) {
+            fastify.log.error("DEBUG: Failed rule - employment date is invalid");
+            return reply.code(404).send({ message: "Employee employment date is not set or invalid." });
         }
 
         const today = new Date();
         const tenureInYears = (today.getTime() - employmentDate.getTime()) / (1000 * 60 * 60 * 24 * 365.25);
+        fastify.log.info({ tenureInYears }, "DEBUG: Calculated tenure");
 
         // Aturan 2: Masa kerja minimal 5 tahun
         if (tenureInYears < 5) {
+            fastify.log.warn("DEBUG: Failed rule - tenure < 5 years");
             return reply.code(403).send({ message: `Not eligible for long leave. Minimum 5 years of service required. Your tenure: ${tenureInYears.toFixed(1)} years.` });
         }
 
         const currentTier = Math.floor(tenureInYears / 5) * 5;
-        if (currentTier < 5) { // Double check, should be covered by tenure check
-             return reply.code(403).send({ message: "Not eligible for any long leave tier." });
-        }
-
         const eligibilityStartDate = new Date(employmentDate);
         eligibilityStartDate.setFullYear(eligibilityStartDate.getFullYear() + currentTier);
-
         const expirationDate = new Date(eligibilityStartDate);
         expirationDate.setFullYear(expirationDate.getFullYear() + 3);
+        fastify.log.info({ currentTier, eligibilityStartDate: eligibilityStartDate.toISOString(), expirationDate: expirationDate.toISOString() }, "DEBUG: Calculated tier and dates");
 
         // Aturan 3: Cek masa hangus
         if (today > expirationDate) {
+            fastify.log.warn("DEBUG: Failed rule - expired window");
             return reply.code(403).send({ message: `Long leave for the ${currentTier}-year service period has expired on ${expirationDate.toISOString().split('T')[0]}.` });
         }
         
@@ -1209,8 +1213,10 @@ fastify.post("/leave/requests/special", { preValidation: [fastify.authenticate] 
         });
 
         const daysTakenInWindow = pastLongLeavesInWindow.value.reduce((sum, leave) => sum + leave.ecom_numberofdays, 0);
+        fastify.log.info({ daysTakenInWindow, requested: days }, "DEBUG: Checking window quota");
 
         if ((daysTakenInWindow + days) > 20) {
+            fastify.log.warn("DEBUG: Failed rule - quota exceeded");
             return reply.code(400).send({
                 message: "Request exceeds the 20-day total quota for the current eligibility window.",
                 total_quota: 20,
@@ -1221,7 +1227,7 @@ fastify.post("/leave/requests/special", { preValidation: [fastify.authenticate] 
 
     } else {
         // --- VALIDASI CUTI KHUSUS LAINNYA ---
-        fastify.log.info("Applying simple quota validation logic.");
+        fastify.log.info("DEBUG: Applying simple quota validation logic for non-long-leave.");
         if (leaveTypeInfo.ecom_quota == null) {
             return reply.code(400).send({ message: `Leave type '${leaveTypeInfo.ecom_name}' does not use a quota system.` });
         }
