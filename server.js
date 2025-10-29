@@ -1724,3 +1724,119 @@ fastify.get("/admin/leave-history/search", { preValidation: [fastify.authenticat
     });
   }
 });
+
+// ==============================
+// 🔹 Development History Mappings
+// ==============================
+const DEVELOPMENT_TYPE_MAP = {
+  273700000: 'Project',
+  273700001: 'Training',
+  273700002: 'Certification',
+  273700003: 'Onboarding',
+};
+
+// Helper to transform development records
+const transformDevelopmentRecord = (record) => ({
+  id: record.ecom_developmentid,
+  title: record.ecom_title,
+  type_code: record.ecom_type,
+  type_label: DEVELOPMENT_TYPE_MAP[record.ecom_type] || 'Unknown',
+  start_date: record.ecom_date,
+  end_date: record.ecom_enddate,
+  involvement_percentage: record.ecom_description,
+  client_name: record.ecom_client?.name || null,
+  project_manager_name: record.ecom_projectmanager?.fullname || null,
+  created_by_name: record.createdby?.fullname || null,
+  last_updated_on: record.ecom_updatedon,
+});
+
+// ==============================
+// 🔹 Development History: Get Own History
+// ==============================
+fastify.get("/developments", { preValidation: [fastify.authenticate] }, async (req, reply) => {
+  const employeeGuid = req.user.employeeId;
+
+  try {
+    const historyData = await dataverseRequest(req, "get", "ecom_developments", {
+      params: {
+        $filter: `_ecom_employeeid_value eq ${employeeGuid}`,
+        $select: "ecom_developmentid,ecom_title,ecom_date,ecom_enddate,ecom_description,ecom_type,ecom_updatedon",
+        $expand: "ecom_client($select=name),ecom_projectmanager($select=fullname),createdby($select=fullname)",
+        $orderby: "ecom_date desc",
+      }
+    });
+
+    if (!historyData.value || historyData.value.length === 0) {
+      return [];
+    }
+
+    const transformedData = historyData.value.map(transformDevelopmentRecord);
+    return transformedData;
+
+  } catch (err) {
+    fastify.log.error({ msg: "❌ Error fetching own development history", error: err.response?.data || err.message });
+    reply.status(500).send({
+      error: "Failed to fetch development history",
+      details: err.response?.data?.error?.message || err.message,
+    });
+  }
+});
+
+// ==============================
+// 🔹 Development History: Admin Search
+// ==============================
+fastify.get("/admin/developments/search", { preValidation: [fastify.authenticate] }, async (req, reply) => {
+  if (req.user.role !== "admin") {
+    return reply.code(403).send({ message: "Admin access only." });
+  }
+
+  const { email, name } = req.query;
+  if (!email && !name) {
+    return reply.code(400).send({ message: "Either email or name query parameter is required." });
+  }
+
+  try {
+    let employeeGuid;
+
+    // Find employee GUID from email or name
+    let personalInfoFilter;
+    if (email) {
+      personalInfoFilter = `ecom_workemail eq '${email}'`;
+    } else { // name
+      personalInfoFilter = `ecom_employeename eq '${name}'`;
+    }
+
+    const personalInfoRes = await dataverseRequest(req, "get", "ecom_personalinformations", {
+      params: { $filter: personalInfoFilter, $select: "ecom_personalinformationid" },
+    });
+
+    if (!personalInfoRes.value || personalInfoRes.value.length === 0) {
+      return reply.code(404).send({ message: `Employee not found with the provided ${email ? 'email' : 'name'}.` });
+    }
+    employeeGuid = personalInfoRes.value[0].ecom_personalinformationid;
+
+    // Fetch development history for the found employee
+    const historyData = await dataverseRequest(req, "get", "ecom_developments", {
+      params: {
+        $filter: `_ecom_employeeid_value eq ${employeeGuid}`,
+        $select: "ecom_developmentid,ecom_title,ecom_date,ecom_enddate,ecom_description,ecom_type,ecom_updatedon",
+        $expand: "ecom_client($select=name),ecom_projectmanager($select=fullname),createdby($select=fullname)",
+        $orderby: "ecom_date desc",
+      }
+    });
+
+    if (!historyData.value || historyData.value.length === 0) {
+      return [];
+    }
+
+    const transformedData = historyData.value.map(transformDevelopmentRecord);
+    return transformedData;
+
+  } catch (err) {
+    fastify.log.error({ msg: "❌ Error in admin development history search", error: err.response?.data || err.message });
+    reply.status(500).send({
+      error: "Failed to search development history",
+      details: err.response?.data?.error?.message || err.message,
+    });
+  }
+});
