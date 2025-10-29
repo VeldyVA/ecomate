@@ -332,6 +332,7 @@ function isAdmin(email) {
 // 🔹 Middleware Auth (diperbarui untuk JWT)
 // ==============================
 fastify.decorate("authenticate", async (req, reply) => {
+  fastify.log.info({ headers: req.headers }, "DEBUG: Incoming headers for authentication");
   // Prioritaskan otentikasi via API Key (JWT) dari header
   if (req.headers.authorization) {
     fastify.log.info("Authentication: Authorization header found.");
@@ -1744,9 +1745,9 @@ const transformDevelopmentRecord = (record) => ({
   start_date: record.ecom_date,
   end_date: record.ecom_enddate,
   involvement_percentage: record.ecom_description,
-  client_name: record.ecom_client?.name || null,
-  project_manager_name: record.ecom_projectmanager?.fullname || null,
-  created_by_name: record.createdby?.fullname || null,
+  client_name: record.ecom_Development_Client_Account?.name || null,
+  project_manager_name: record.ecom_Development_ProjectManager_SystemUser?.fullname || null,
+  created_by_name: record.lk_ecom_development_createdby?.fullname || null,
   last_updated_on: record.ecom_updatedon,
 });
 
@@ -1761,7 +1762,7 @@ fastify.get("/developments", { preValidation: [fastify.authenticate] }, async (r
       params: {
         $filter: `_ecom_employeeid_value eq ${employeeGuid}`,
         $select: "ecom_developmentid,ecom_title,ecom_date,ecom_enddate,ecom_description,ecom_type,ecom_updatedon",
-        $expand: "ecom_client($select=name),ecom_projectmanager($select=fullname),createdby($select=fullname)",
+        $expand: "ecom_Development_Client_Account($select=name),ecom_Development_ProjectManager_SystemUser($select=fullname),lk_ecom_development_createdby($select=fullname)",
         $orderby: "ecom_date desc",
       }
     });
@@ -1820,7 +1821,7 @@ fastify.get("/admin/developments/search", { preValidation: [fastify.authenticate
       params: {
         $filter: `_ecom_employeeid_value eq ${employeeGuid}`,
         $select: "ecom_developmentid,ecom_title,ecom_date,ecom_enddate,ecom_description,ecom_type,ecom_updatedon",
-        $expand: "ecom_client($select=name),ecom_projectmanager($select=fullname),createdby($select=fullname)",
+        $expand: "ecom_Development_Client_Account($select=name),ecom_Development_ProjectManager_SystemUser($select=fullname),lk_ecom_development_createdby($select=fullname)",
         $orderby: "ecom_date desc",
       }
     });
