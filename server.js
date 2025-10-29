@@ -1762,7 +1762,7 @@ fastify.get("/developments", { preValidation: [fastify.authenticate] }, async (r
       params: {
         $filter: `_ecom_employeeid_value eq ${employeeGuid}`,
         $select: "ecom_developmentid,ecom_title,ecom_date,ecom_enddate,ecom_description,ecom_type,ecom_updatedon",
-        $expand: "ecom_Development_Client_Account($select=name),ecom_Development_ProjectManager_SystemUser($select=fullname),lk_ecom_development_createdby($select=fullname)",
+        $expand: "ecom_Client($select=name),ecom_ProjectManager($select=fullname),CreatedBy($select=fullname)",
         $orderby: "ecom_date desc",
       }
     });
@@ -1821,7 +1821,7 @@ fastify.get("/admin/developments/search", { preValidation: [fastify.authenticate
       params: {
         $filter: `_ecom_employeeid_value eq ${employeeGuid}`,
         $select: "ecom_developmentid,ecom_title,ecom_date,ecom_enddate,ecom_description,ecom_type,ecom_updatedon",
-        $expand: "ecom_Development_Client_Account($select=name),ecom_Development_ProjectManager_SystemUser($select=fullname),lk_ecom_development_createdby($select=fullname)",
+        $expand: "ecom_Client($select=name),ecom_ProjectManager($select=fullname),CreatedBy($select=fullname)",
         $orderby: "ecom_date desc",
       }
     });
