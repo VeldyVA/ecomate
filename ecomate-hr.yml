@@ -610,6 +610,104 @@ paths:
         '403':
           description: 'Akses ditolak (bukan admin).'
 
+  /developments:
+    get:
+      summary: Get Own Project History
+      description: Mengambil riwayat keterlibatan proyek dan pengembangan (training, sertifikasi) milik user yang sedang login.
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Riwayat proyek berhasil diambil.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      format: uuid
+                    title:
+                      type: string
+                    type_code:
+                      type: integer
+                    type_label:
+                      type: string
+                      enum: [Project, Training, Certification, Onboarding, Unknown]
+                    start_date:
+                      type: string
+                      format: date
+                    end_date:
+                      type: string
+                      format: date
+                    involvement_percentage:
+                      type: string
+                    client_name:
+                      type: string
+                      nullable: true
+                    project_manager_name:
+                      type: string
+                      nullable: true
+                    created_by_name:
+                      type: string
+                      nullable: true
+                    last_updated_on:
+                      type: string
+                      format: date-time
+                  example:
+                    id: "f81d4fae-7dec-11d0-a765-00a0c91e6bf6"
+                    title: "Implementasi Dynamics 365"
+                    type_code: 273700000
+                    type_label: "Project"
+                    start_date: "2023-01-15"
+                    end_date: "2023-06-30"
+                    involvement_percentage: "80%"
+                    client_name: "PT Sejahtera Abadi"
+                    project_manager_name: "John Doe"
+                    created_by_name: "Admin User"
+                    last_updated_on: "2023-07-01T10:00:00Z"
+        '401':
+          description: Tidak terautentikasi.
+
+  /admin/developments/search:
+    get:
+      summary: "Admin: Search Project History"
+      description: Admin dapat mencari riwayat proyek/pengembangan milik karyawan berdasarkan email atau nama.
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: email
+          in: query
+          schema:
+            type: string
+          description: "Email karyawan yang ingin dicari."
+        - name: name
+          in: query
+          schema:
+            type: string
+          description: "Nama karyawan yang ingin dicari."
+      responses:
+        '200':
+          description: Riwayat proyek karyawan berhasil diambil.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/paths/~1developments/get/responses/200/content/application~1json/schema/items'
+        '400':
+          description: Parameter query 'email' atau 'name' tidak disediakan.
+        '401':
+          description: Tidak terautentikasi.
+        '403':
+          description: Akses ditolak (bukan admin).
+        '404':
+          description: Karyawan dengan email/nama tersebut tidak ditemukan.
+
 components:
   securitySchemes:
     cookieAuth:
