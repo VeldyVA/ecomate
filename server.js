@@ -1161,7 +1161,7 @@ fastify.post("/leave/requests/special", { preValidation: [fastify.authenticate] 
     });
 
     // === 4. LOGIKA INTI: Cuti Panjang vs Cuti Khusus Lainnya ===
-    const isLongLeave = leaveTypeInfo.ecom_name === 'Cuti Panjang';
+    const isLongLeave = leaveTypeInfo.ecom_name.trim().toLowerCase().startsWith('cuti panjang');
     fastify.log.info({ leaveTypeName: leaveTypeInfo.ecom_name, isLongLeave }, "DEBUG: Checking leave type");
 
     if (isLongLeave) {
