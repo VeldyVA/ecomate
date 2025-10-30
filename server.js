@@ -112,12 +112,21 @@ fastify.get("/auth/callback", async (req, reply) => {
     return reply.status(400).send({ error: "No authorization code received." });
   }
 
+  // Prevent code from being used twice
+  if (req.session.processedCode && req.session.processedCode === code) {
+    fastify.log.warn(`Authorization code ${code} has already been processed. Redirecting to OTP page.`);
+    return reply.redirect('/show-otp');
+  }
+
   try {
     const tokenResponse = await cca.acquireTokenByCode({
       code: req.query.code,
       scopes: [`${dataverseBaseUrl}/.default`, "offline_access"],
       redirectUri: process.env.REDIRECT_URI,
     });
+
+    // Mark code as processed in the session
+    req.session.processedCode = code;
 
     // Simpan access token di session untuk direct API calls dari browser
     req.session.accessToken = tokenResponse.accessToken;
@@ -151,51 +160,25 @@ fastify.get("/auth/callback", async (req, reply) => {
 
     // Buat JWT jangka panjang (API Key)
     const userPayload = { employeeId, email: userEmail, role: userRole };
-    fastify.jwt.sign(userPayload, { expiresIn: '90d' }, (err, longLivedJwt) => {
-      if (err) {
-        console.error("❌ Error signing JWT:", err);
-        return reply.status(500).send({ error: "Failed to sign JWT." });
-      }
+    const longLivedJwt = await fastify.jwt.sign(userPayload, { expiresIn: '90d' });
 
-      // Buat OTP untuk ditukar dengan JWT
-      const otp = generateOTP();
-      const expiresAt = new Date(new Date().getTime() + 5 * 60000); // 5 menit
-      const otpFilePath = path.join(otpDir, `${otp}.json`);
-      const otpData = JSON.stringify({ jwt: longLivedJwt, expiresAt: expiresAt.toISOString() });
+    // Buat OTP untuk ditukar dengan JWT
+    const otp = generateOTP();
+    const expiresAt = new Date(new Date().getTime() + 5 * 60000); // 5 menit
+    const otpFilePath = path.join(otpDir, `${otp}.json`);
+    const otpData = JSON.stringify({ jwt: longLivedJwt, expiresAt: expiresAt.toISOString() });
 
-      try {
-        fs.writeFileSync(otpFilePath, otpData);
-        fastify.log.info(`OTP ${otp} stored in file.`);
-      } catch (writeErr) {
-        fastify.log.error("❌ Error writing OTP file:", writeErr);
-        return reply.status(500).send({ error: "Failed to store authentication session." });
-      }
+    try {
+      fs.writeFileSync(otpFilePath, otpData);
+      fastify.log.info(`OTP ${otp} stored in file.`);
+    } catch (writeErr) {
+      fastify.log.error("❌ Error writing OTP file:", writeErr);
+      return reply.status(500).send({ error: "Failed to store authentication session." });
+    }
 
-      // Tampilkan halaman HTML dengan OTP
-      reply.type('text/html').send(`
-        <html>
-          <head>
-            <title>Login Success</title>
-            <style>
-              body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background-color: #f4f4f9; margin: 0; }
-              .container { text-align: center; padding: 40px; background-color: #fff; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
-              h1 { color: #333; }
-              p { color: #555; }
-              .otp { font-size: 2.5em; font-weight: bold; color: #007bff; letter-spacing: 5px; margin: 20px 0; padding: 10px; background-color: #eef; border-radius: 4px; }
-              .expiry { font-size: 0.9em; color: #999; }
-            </style>
-          </head>
-          <body>
-            <div class="container">
-              <h1>Authentication Successful!</h1>
-              <p>Enter this one-time code in your Pusaka agent:</p>
-              <div class="otp">${otp.slice(0,3)}-${otp.slice(3,6)}</div>
-              <p class="expiry">This code will expire in 5 minutes.</p>
-            </div>
-          </body>
-        </html>
-      `);
-    });
+    // Simpan OTP di session dan redirect ke halaman baru untuk menampilkannya
+    req.session.otp = otp;
+    reply.redirect('/show-otp');
 
   } catch (err) {
     fastify.log.error({ msg: "❌ Authentication callback error", err: err.message, stack: err.stack });
@@ -238,6 +221,48 @@ fastify.get("/auth/callback", async (req, reply) => {
       </html>
     `);
   }
+});
+
+// ==============================
+// 🔹 Endpoint Baru: Tampilkan OTP setelah login sukses
+// ==============================
+fastify.get("/show-otp", (req, reply) => {
+  const otp = req.session.otp;
+
+  if (!otp) {
+    // Jika tidak ada OTP di session, mungkin user refresh halaman /show-otp atau akses langsung.
+    // Redirect ke halaman login untuk memulai alur baru.
+    return reply.redirect('/login');
+  }
+
+  // Hapus OTP dari session agar hanya bisa ditampilkan sekali.
+  delete req.session.otp;
+  // Hapus juga processedCode agar alur login bisa diulang dari awal jika perlu.
+  delete req.session.processedCode;
+
+  reply.type('text/html').send(`
+    <html>
+      <head>
+        <title>Login Success</title>
+        <style>
+          body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background-color: #f4f4f9; margin: 0; }
+          .container { text-align: center; padding: 40px; background-color: #fff; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+          h1 { color: #333; }
+          p { color: #555; }
+          .otp { font-size: 2.5em; font-weight: bold; color: #007bff; letter-spacing: 5px; margin: 20px 0; padding: 10px; background-color: #eef; border-radius: 4px; }
+          .expiry { font-size: 0.9em; color: #999; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <h1>Authentication Successful!</h1>
+          <p>Enter this one-time code in your Pusaka agent:</p>
+          <div class="otp">${otp.slice(0,3)}-${otp.slice(3,6)}</div>
+          <p class="expiry">This code will expire in 5 minutes.</p>
+        </div>
+      </body>
+    </html>
+  `);
 });
 
 // ==============================
