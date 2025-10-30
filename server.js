@@ -1917,7 +1917,7 @@ fastify.get("/summary-peer-review", { preValidation: [fastify.authenticate] }, a
       params: {
         $filter: `_ecom_employee_value eq ${employeeId}`,
         $select: "ecom_startdate,ecom_enddate,ecom_totalpeerreview,ecom_averagerating",
-        $expand: "ecom_Project($select=ecom_projectname,ecom_Customer($select=name)),ecom_Employee($select=fullname)",
+        $expand: "ecom_Project($select=ecom_projectname),ecom_Employee($select=fullname)",
       }
     });
 
@@ -1927,7 +1927,6 @@ fastify.get("/summary-peer-review", { preValidation: [fastify.authenticate] }, a
 
     const transformedData = summaryData.value.map(item => ({
       project_name: item.ecom_Project?.ecom_projectname || null,
-      customer_name: item.ecom_Project?.ecom_Customer?.name || null,
       employee_name: item.ecom_Employee?.fullname || null,
       project_start_date: item.ecom_startdate,
       project_end_date: item.ecom_enddate,
@@ -1991,7 +1990,7 @@ fastify.get("/admin/summary-peer-review/search", { preValidation: [fastify.authe
       params: {
         $filter: `_ecom_employee_value eq ${userIdToSearch}`,
         $select: "ecom_startdate,ecom_enddate,ecom_totalpeerreview,ecom_averagerating",
-        $expand: "ecom_Project($select=ecom_projectname,ecom_Customer($select=name)),ecom_Employee($select=fullname)",
+        $expand: "ecom_Project($select=ecom_projectname),ecom_Employee($select=fullname)",
       }
     });
 
@@ -2001,7 +2000,6 @@ fastify.get("/admin/summary-peer-review/search", { preValidation: [fastify.authe
 
     const transformedData = summaryData.value.map(item => ({
       project_name: item.ecom_Project?.ecom_projectname || null,
-      customer_name: item.ecom_Project?.ecom_Customer?.name || null,
       employee_name: item.ecom_Employee?.fullname || null,
       project_start_date: item.ecom_startdate,
       project_end_date: item.ecom_enddate,
