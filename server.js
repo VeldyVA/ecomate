@@ -25,6 +25,10 @@ if (!process.env.JWT_SECRET) {
   fastify.log.error("FATAL: JWT_SECRET environment variable is not set.");
   process.exit(1);
 }
+if (!process.env.REDIRECT_URI) {
+  fastify.log.error("FATAL: REDIRECT_URI environment variable is not set.");
+  process.exit(1);
+}
 fastify.register(jwt, {
   secret: process.env.JWT_SECRET,
 });
@@ -83,7 +87,7 @@ fastify.get("/", async (req, reply) => {
 fastify.get("/login", async (req, reply) => {
   const authCodeUrlParameters = {
     scopes: [`${dataverseBaseUrl}/.default`, "offline_access"], // scope untuk Dataverse + refresh token
-    redirectUri: process.env.REDIRECT_URI || "http://localhost:3000/auth/callback",
+    redirectUri: process.env.REDIRECT_URI,
   };
 
   const authUrl = await cca.getAuthCodeUrl(authCodeUrlParameters);
@@ -112,7 +116,7 @@ fastify.get("/auth/callback", async (req, reply) => {
     const tokenResponse = await cca.acquireTokenByCode({
       code: req.query.code,
       scopes: [`${dataverseBaseUrl}/.default`, "offline_access"],
-      redirectUri: process.env.REDIRECT_URI || "http://localhost:3000/auth/callback",
+      redirectUri: process.env.REDIRECT_URI,
     });
 
     // Simpan access token di session untuk direct API calls dari browser
@@ -194,11 +198,45 @@ fastify.get("/auth/callback", async (req, reply) => {
     });
 
   } catch (err) {
-    console.error("❌ Authentication callback error:", err);
-    reply.status(500).send({
-      error: "Authentication failed",
-      details: err.errorMessage || err.message,
-    });
+    fastify.log.error({ msg: "❌ Authentication callback error", err: err.message, stack: err.stack });
+
+    let userEmail = null;
+    const errorMessage = err.message || "";
+    
+    // Try to extract email from the specific error message
+    const match = errorMessage.match(/not found for email (\S+)/);
+    if (match && match[1]) {
+      userEmail = match[1];
+    }
+
+    let title = "Login Gagal";
+    let message;
+
+    if (userEmail) {
+      message = `<p>Alamat email Anda <strong style="color: #333;">${userEmail}</strong> berhasil diautentikasi, tetapi tidak ditemukan di sistem HR Ecomate.</p><p style="font-size: 0.9em; color: #777;">Mohon hubungi departemen HR untuk pendaftaran atau jika Anda merasa ini adalah sebuah kesalahan.</p>`;
+    } else {
+      message = `<p>Terjadi kesalahan teknis saat memproses autentikasi Anda.</p><p style="font-size: 0.9em; color: #777;">Silakan coba lagi, atau hubungi administrator jika masalah berlanjut.</p>`;
+    }
+
+    reply.code(500).type('text/html').send(`
+      <html>
+        <head>
+          <title>${title}</title>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background-color: #f8f9fa; margin: 0; }
+            .container { text-align: center; padding: 40px; background-color: #fff; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); border-top: 5px solid #dc3545; max-width: 500px; }
+            h1 { color: #dc3545; margin-bottom: 20px; }
+            p { color: #343a40; font-size: 1.1em; line-height: 1.6; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>${title}</h1>
+            ${message}
+          </div>
+        </body>
+      </html>
+    `);
   }
 });
 
