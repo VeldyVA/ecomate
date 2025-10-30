@@ -1846,6 +1846,7 @@ fastify.get("/admin/developments/search", { preValidation: [fastify.authenticate
 // 🔹 Summary Peer Review: Get Own Reviews
 // ==============================
 fastify.get("/summary-peer-review", { preValidation: [fastify.authenticate] }, async (req, reply) => {
+  // Assuming req.user.employeeId is the systemuserid
   const employeeId = req.user.employeeId;
 
   try {
@@ -1896,32 +1897,35 @@ fastify.get("/admin/summary-peer-review/search", { preValidation: [fastify.authe
   }
 
   try {
-    let employeeFilter;
+    let userIdToSearch;
 
     if (employeeId) {
-      employeeFilter = `_ecom_employee_value eq ${employeeId}`;
+      userIdToSearch = employeeId;
     } else {
-      let personalInfoFilter;
+      let userFilter;
       if (email) {
-        personalInfoFilter = `ecom_workemail eq '${email}'`;
+        userFilter = `internalemailaddress eq '${email}'`;
       } else { // name
-        personalInfoFilter = `ecom_employeename eq '${name}'`;
+        userFilter = `fullname eq '${name}'`;
       }
 
-      const personalInfoRes = await dataverseRequest(req, "get", "ecom_personalinformations", {
-        params: { $filter: personalInfoFilter, $select: "ecom_personalinformationid" },
+      const userRes = await dataverseRequest(req, "get", "systemusers", {
+        params: {
+          $filter: userFilter,
+          $select: "systemuserid"
+        },
       });
 
-      if (!personalInfoRes.value || personalInfoRes.value.length === 0) {
-        return reply.code(404).send({ message: `Employee not found with the provided ${email ? 'email' : 'name'}.` });
+      if (!userRes.value || userRes.value.length === 0) {
+        // Return empty array if user not found, to match the "success 200 but no data" behavior
+        return [];
       }
-      const foundEmployeeId = personalInfoRes.value[0].ecom_personalinformationid;
-      employeeFilter = `_ecom_employee_value eq ${foundEmployeeId}`;
+      userIdToSearch = userRes.value[0].systemuserid;
     }
 
     const summaryData = await dataverseRequest(req, "get", "ecom_summarypeerreviews", {
       params: {
-        $filter: employeeFilter,
+        $filter: `_ecom_employee_value eq ${userIdToSearch}`,
         $select: "ecom_startdate,ecom_enddate,ecom_totalpeerreview,ecom_averagerating",
         $expand: "ecom_Project($select=ecom_projectname),ecom_Employee($select=fullname)",
       }
