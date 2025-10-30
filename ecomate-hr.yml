@@ -708,7 +708,95 @@ paths:
         '404':
           description: Karyawan dengan email/nama tersebut tidak ditemukan.
 
+  /summary-peer-review:
+    get:
+      summary: "Get Own Summary Peer Reviews"
+      description: Mengambil data summary peer review milik pengguna yang sedang login.
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Data summary peer review berhasil diambil.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SummaryPeerReview'
+        '401':
+          description: Tidak terautentikasi.
+
+  /admin/summary-peer-review/search:
+    get:
+      summary: "Admin: Search Summary Peer Reviews"
+      description: "(Admin) Mencari data summary peer review milik karyawan berdasarkan kriteria."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: employeeId
+          in: query
+          schema:
+            type: string
+          description: 'GUID dari karyawan.'
+        - name: email
+          in: query
+          schema:
+            type: string
+          description: 'Email karyawan.'
+        - name: name
+          in: query
+          schema:
+            type: string
+          description: 'Nama karyawan.'
+      responses:
+        '200':
+          description: Data summary peer review berhasil diambil.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SummaryPeerReview'
+        '400':
+          description: Parameter pencarian tidak disediakan.
+        '401':
+          description: Tidak terautentikasi.
+        '403':
+          description: Akses ditolak (bukan admin).
+        '404':
+          description: Karyawan tidak ditemukan.
+
 components:
+  schemas:
+    SummaryPeerReview:
+      type: object
+      properties:
+        project_name:
+          type: string
+          nullable: true
+        employee_name:
+          type: string
+          nullable: true
+        project_start_date:
+          type: string
+          format: date
+        project_end_date:
+          type: string
+          format: date
+        total_peer_review:
+          type: integer
+        average_rating:
+          type: number
+          format: double
+      example:
+        project_name: "Website Revamp"
+        employee_name: "Budi Santoso"
+        project_start_date: "2024-01-10"
+        project_end_date: "2024-06-30"
+        total_peer_review: 5
+        average_rating: 4.5
   securitySchemes:
     cookieAuth:
       type: apiKey

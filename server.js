@@ -1841,3 +1841,112 @@ fastify.get("/admin/developments/search", { preValidation: [fastify.authenticate
     });
   }
 });
+
+// ==============================
+// 🔹 Summary Peer Review: Get Own Reviews
+// ==============================
+fastify.get("/summary-peer-review", { preValidation: [fastify.authenticate] }, async (req, reply) => {
+  const employeeId = req.user.employeeId;
+
+  try {
+    const summaryData = await dataverseRequest(req, "get", "ecom_summarypeerreviews", {
+      params: {
+        $filter: `_ecom_employee_value eq ${employeeId}`,
+        $select: "ecom_startdate,ecom_enddate,ecom_totalpeerreview,ecom_averagerating",
+        $expand: "ecom_Project($select=ecom_projectname),ecom_Employee($select=fullname)",
+      }
+    });
+
+    if (!summaryData.value || summaryData.value.length === 0) {
+      return [];
+    }
+
+    const transformedData = summaryData.value.map(item => ({
+      project_name: item.ecom_Project?.ecom_projectname || null,
+      employee_name: item.ecom_Employee?.fullname || null,
+      project_start_date: item.ecom_startdate,
+      project_end_date: item.ecom_enddate,
+      total_peer_review: item.ecom_totalpeerreview,
+      average_rating: item.ecom_averagerating,
+    }));
+
+    return transformedData;
+
+  } catch (err) {
+    fastify.log.error({ msg: "❌ Error fetching own summary peer review", error: err.response?.data || err.message });
+    reply.status(500).send({
+      error: "Failed to fetch own summary peer review",
+      details: err.response?.data?.error?.message || err.message,
+    });
+  }
+});
+
+// ==============================
+// 🔹 Admin: Search Summary Peer Reviews
+// ==============================
+fastify.get("/admin/summary-peer-review/search", { preValidation: [fastify.authenticate] }, async (req, reply) => {
+  if (req.user.role !== "admin") {
+    return reply.code(403).send({ message: "Admin access only." });
+  }
+
+  const { employeeId, email, name } = req.query;
+
+  if (!employeeId && !email && !name) {
+    return reply.code(400).send({ message: "Either employeeId, email or name must be provided to search." });
+  }
+
+  try {
+    let employeeFilter;
+
+    if (employeeId) {
+      employeeFilter = `_ecom_employee_value eq ${employeeId}`;
+    } else {
+      let personalInfoFilter;
+      if (email) {
+        personalInfoFilter = `ecom_workemail eq '${email}'`;
+      } else { // name
+        personalInfoFilter = `ecom_employeename eq '${name}'`;
+      }
+
+      const personalInfoRes = await dataverseRequest(req, "get", "ecom_personalinformations", {
+        params: { $filter: personalInfoFilter, $select: "ecom_personalinformationid" },
+      });
+
+      if (!personalInfoRes.value || personalInfoRes.value.length === 0) {
+        return reply.code(404).send({ message: `Employee not found with the provided ${email ? 'email' : 'name'}.` });
+      }
+      const foundEmployeeId = personalInfoRes.value[0].ecom_personalinformationid;
+      employeeFilter = `_ecom_employee_value eq ${foundEmployeeId}`;
+    }
+
+    const summaryData = await dataverseRequest(req, "get", "ecom_summarypeerreviews", {
+      params: {
+        $filter: employeeFilter,
+        $select: "ecom_startdate,ecom_enddate,ecom_totalpeerreview,ecom_averagerating",
+        $expand: "ecom_Project($select=ecom_projectname),ecom_Employee($select=fullname)",
+      }
+    });
+
+    if (!summaryData.value || summaryData.value.length === 0) {
+      return [];
+    }
+
+    const transformedData = summaryData.value.map(item => ({
+      project_name: item.ecom_Project?.ecom_projectname || null,
+      employee_name: item.ecom_Employee?.fullname || null,
+      project_start_date: item.ecom_startdate,
+      project_end_date: item.ecom_enddate,
+      total_peer_review: item.ecom_totalpeerreview,
+      average_rating: item.ecom_averagerating,
+    }));
+
+    return transformedData;
+
+  } catch (err) {
+    fastify.log.error({ msg: "❌ Error in admin summary peer review search", error: err.response?.data || err.message });
+    reply.status(500).send({
+      error: "Failed to search summary peer review",
+      details: err.response?.data?.error?.message || err.message,
+    });
+  }
+});
