@@ -396,21 +396,37 @@ function isAdmin(email) {
 // ==============================
 fastify.decorate("authenticate", async (req, reply) => {
   fastify.log.info({ headers: req.headers }, "DEBUG: Incoming headers for authentication");
+
   // Prioritaskan otentikasi via API Key (JWT) dari header
   if (req.headers.authorization) {
     fastify.log.info("Authentication: Authorization header found.");
-    const [type, token] = req.headers.authorization.split(' ') || [];
-    if (type === 'Bearer' && token) {
-      try {
-        const decoded = fastify.jwt.verify(token);
-        req.user = decoded; // payload JWT kita berisi: { employeeId, email, role }
-        fastify.log.info(`Authentication: JWT verified for user ${decoded.email} with role ${decoded.role}.`);
-        return; // Sukses, lanjut ke handler
-      } catch (err) {
-        fastify.log.warn(`Authentication: JWT verification failed: ${err.message}`);
-        return reply.code(401).send({ error: "Invalid API Key." });
+    const parts = req.headers.authorization.split(' ');
+
+    if (parts.length === 2 && parts[0] === 'Bearer') {
+      const token = parts[1];
+      if (token) {
+        try {
+          const decoded = fastify.jwt.verify(token);
+          req.user = decoded; // payload JWT kita berisi: { employeeId, email, role }
+          fastify.log.info(`Authentication: JWT verified for user ${decoded.email} with role ${decoded.role}.`);
+          return; // Sukses, lanjut ke handler
+        } catch (err) {
+          // Log detail error dan token yang bermasalah
+          fastify.log.warn({
+            msg: `Authentication: JWT verification failed: ${err.message}`,
+            token: token,
+            error_details: { name: err.name, message: err.message, stack: err.stack }
+          });
+          return reply.code(401).send({ error: "Invalid API Key." });
+        }
       }
     }
+    
+    // Jika format header bukan 'Bearer <token>'
+    fastify.log.warn({
+      msg: "Authentication: Malformed Authorization header received.",
+      header: req.headers.authorization
+    });
   }
 
   // Fallback ke otentikasi via session cookie (untuk browser)
@@ -436,7 +452,7 @@ fastify.decorate("authenticate", async (req, reply) => {
     }
   }
 
-  // Jika keduanya gagal
+  // Jika semua gagal
   return reply.code(401).send({ error: "Not authenticated. Please login or provide an API Key." });
 });
 
