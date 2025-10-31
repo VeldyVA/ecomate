@@ -107,8 +107,16 @@ function generateOTP() {
 // 🔹 Callback setelah login user (diubah untuk alur OTP)
 // ==============================
 fastify.get("/auth/callback", async (req, reply) => {
+  // Log the full request query to debug missing code issues
+  fastify.log.info({
+    msg: "Received request at /auth/callback",
+    query: req.query,
+    url: req.raw.url // log raw url
+  });
+
   const code = req.query.code;
   if (!code) {
+    fastify.log.error("FATAL: /auth/callback was called without an authorization code.");
     return reply.status(400).send({ error: "No authorization code received." });
   }
 
