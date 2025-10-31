@@ -1593,13 +1593,53 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
   }
 
   try {
-    const requestsData = await dataverseRequest(req, "get", "ecom_employeeleaves", {
-      params: {
-        $expand: "ecom_LeaveType($select=ecom_name),ecom_employee($select=ecom_employeename)",
-        $select: "ecom_name,ecom_startdate,ecom_enddate,ecom_numberofdays,ecom_leavestatus,ecom_pmsmapprovalstatus,ecom_hrapprovalstatus",
-        $orderby: "createdon desc"
+    const { startDate, endDate, month, year } = req.query;
+    const filters = [];
+
+    let finalStartDate = startDate;
+    let finalEndDate = endDate;
+
+    // Handle month and year parameters if explicit date range isn't provided
+    if (!finalStartDate && !finalEndDate) {
+      if (month) { // e.g., month=2025-12
+        const [y, m] = month.split('-').map(Number);
+        if (y && m && m >= 1 && m <= 12) {
+          finalStartDate = `${y}-${String(m).padStart(2, '0')}-01`;
+          const lastDay = new Date(y, m, 0).getDate();
+          finalEndDate = `${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+        }
+      } else if (year) { // e.g., year=2025
+        const y = Number(year);
+        if (y) {
+          finalStartDate = `${y}-01-01`;
+          finalEndDate = `${y}-12-31`;
+        }
       }
-    });
+    }
+
+    // Build the OData filter for overlap
+    if (finalStartDate) {
+      // Leaves that end on or after the start of the period
+      filters.push(`ecom_enddate ge ${finalStartDate}`);
+    }
+    if (finalEndDate) {
+      // Leaves that start on or before the end of the period
+      filters.push(`ecom_startdate le ${finalEndDate}`);
+    }
+
+    const params = {
+      $expand: "ecom_LeaveType($select=ecom_name),ecom_employee($select=ecom_employeename)",
+      $select: "ecom_name,ecom_startdate,ecom_enddate,ecom_numberofdays,ecom_leavestatus,ecom_pmsmapprovalstatus,ecom_hrapprovalstatus",
+      $orderby: "createdon desc"
+    };
+
+    if (filters.length > 0) {
+      params.$filter = filters.join(' and ');
+    }
+
+    fastify.log.info({ msg: "Fetching admin leave requests with params", params });
+
+    const requestsData = await dataverseRequest(req, "get", "ecom_employeeleaves", { params });
 
     return requestsData.value || [];
 
