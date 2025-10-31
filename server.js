@@ -1628,7 +1628,7 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
     }
 
     const params = {
-      $expand: "ecom_LeaveType($select=ecom_name),ecom_employee($select=ecom_employeename)",
+      $expand: "ecom_LeaveType($select=ecom_name),ecom_Employee($select=ecom_employeename)",
       $select: "ecom_name,ecom_startdate,ecom_enddate,ecom_numberofdays,ecom_leavestatus,ecom_pmsmapprovalstatus,ecom_hrapprovalstatus",
       $orderby: "createdon desc"
     };
