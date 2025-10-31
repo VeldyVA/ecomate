@@ -20,6 +20,9 @@ if (!fs.existsSync(otpDir)) {
   fastify.log.info(`Created directory for OTPs: ${otpDir}`);
 }
 
+// Configuration Validation
+let isConfigValid = true;
+const missingEnvVars = [];
 const requiredEnvVars = [
   'JWT_SECRET',
   'REDIRECT_URI',
@@ -37,11 +40,19 @@ const requiredEnvVars = [
 
 for (const varName of requiredEnvVars) {
   if (!process.env[varName]) {
-    fastify.log.error(`FATAL: Required environment variable "${varName}" is not set.`);
-    process.exit(1);
+    missingEnvVars.push(varName);
+    isConfigValid = false;
   }
 }
-fastify.log.info("All required environment variables are loaded successfully.");
+
+if (!isConfigValid) {
+  fastify.log.error({
+    msg: "FATAL: Application starting with missing environment variables. Service will be in a degraded state.",
+    missing: missingEnvVars
+  });
+} else {
+  fastify.log.info("All required environment variables are loaded successfully.");
+}
 
 // Register JWT plugin
 fastify.register(jwt, {
@@ -100,8 +111,30 @@ fastify.get("/", async (req, reply) => {
 
 // Redirect user ke login Azure
 fastify.get("/login", async (req, reply) => {
+  if (!isConfigValid) {
+    return reply.code(503).type('text/html').send(`
+      <html>
+        <head>
+          <title>Service Error</title>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background-color: #f8f9fa; margin: 0; }
+            .container { text-align: center; padding: 40px; background-color: #fff; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); border-top: 5px solid #ffc107; max-width: 500px; }
+            h1 { color: #343a40; margin-bottom: 20px; }
+            p { color: #343a40; font-size: 1.1em; line-height: 1.6; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>Terdapat Kesalahan</h1>
+            <p>Silakan ulangi proses login dengan me-refresh halaman Agent ecomate.</p>
+          </div>
+        </body>
+      </html>
+    `);
+  }
+
   const authCodeUrlParameters = {
-    scopes: [`${dataverseBaseUrl}/.default`, "offline_access"], // scope untuk Dataverse + refresh token
+    scopes: [`${dataverseBaseUrl}/.default`, "offline_access"],
     redirectUri: process.env.REDIRECT_URI,
   };
 
