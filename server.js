@@ -20,15 +20,30 @@ if (!fs.existsSync(otpDir)) {
   fastify.log.info(`Created directory for OTPs: ${otpDir}`);
 }
 
+const requiredEnvVars = [
+  'JWT_SECRET',
+  'REDIRECT_URI',
+  'SESSION_SECRET',
+  'DATAVERSE_URL',
+  'AZURE_TENANT_ID',
+  'AZURE_CLIENT_ID',
+  'AZURE_CLIENT_SECRET',
+  'ADMIN_EMAILS',
+  'SMTP_HOST',
+  'SMTP_USER',
+  'SMTP_PASS',
+  'POWERAPPS_FLOW_URL'
+];
+
+for (const varName of requiredEnvVars) {
+  if (!process.env[varName]) {
+    fastify.log.error(`FATAL: Required environment variable "${varName}" is not set.`);
+    process.exit(1);
+  }
+}
+fastify.log.info("All required environment variables are loaded successfully.");
+
 // Register JWT plugin
-if (!process.env.JWT_SECRET) {
-  fastify.log.error("FATAL: JWT_SECRET environment variable is not set.");
-  process.exit(1);
-}
-if (!process.env.REDIRECT_URI) {
-  fastify.log.error("FATAL: REDIRECT_URI environment variable is not set.");
-  process.exit(1);
-}
 fastify.register(jwt, {
   secret: process.env.JWT_SECRET,
 });
