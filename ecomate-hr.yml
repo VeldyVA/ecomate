@@ -462,10 +462,705 @@ paths:
   /admin/leave-requests:
     get:
       summary: 'Admin: List all leave requests'
-      description: "(Admin) Mengambil daftar semua permintaan cuti dari seluruh karyawan."
+      description: "(Admin) Mengambil daftar semua permintaan cuti dari seluruh karyawan. Dapat difilter berdasarkan rentang tanggal, bulan, atau tahun."
       security:
         - cookieAuth: []
         - bearerAuth: []
+      parameters:
+        - name: startDate
+          in: query
+          schema:
+            type: string
+            format: date
+          description: 'Tanggal mulai rentang pencarian (YYYY-MM-DD). Digunakan bersama endDate untuk rentang spesifik.'
+        - name: endDate
+          in: query
+          schema:
+            type: string
+            format: date
+          description: 'Tanggal akhir rentang pencarian (YYYY-MM-DD). Digunakan bersama startDate untuk rentang spesifik.'
+        - name: month
+          in: query
+          schema:
+            type: string
+            pattern: '^\\d{4}-\\d{2}
+
+  /admin/leave-requests/search:
+    get:
+      summary: "Admin: Search for employee's leave requests"
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: employeeId
+          in: query
+          schema:
+            type: string
+          description: 'GUID dari karyawan.'
+        - name: email
+          in: query
+          schema:
+            type: string
+          description: 'Email karyawan.'
+        - name: name
+          in: query
+          schema:
+            type: string
+          description: 'Nama karyawan.'
+      responses:
+        '200':
+          description: Daftar permintaan cuti karyawan berhasil diambil.
+        '403':
+          description: 'Akses ditolak (bukan admin).'
+
+  /admin/leave-balance/search:
+    get:
+      summary: "Admin: Search for employee's leave balance"
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: period
+          in: query
+          required: true
+          schema:
+            type: string
+          description: 'Periode tahun yang ingin diperiksa (contoh: 2023).'
+        - name: employeeId
+          in: query
+          schema:
+            type: string
+          description: 'GUID dari karyawan.'
+        - name: email
+          in: query
+          schema:
+            type: string
+          description: 'Email karyawan.'
+        - name: name
+          in: query
+          schema:
+            type: string
+          description: 'Nama karyawan.'
+      responses:
+        '200':
+          description: Daftar saldo cuti karyawan berhasil diambil.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    leave_type_id:
+                      type: string
+                    leave_type_name:
+                      type: string
+                    quota:
+                      type: integer
+                    balance:
+                      type: integer
+                    end_date:
+                      type: string
+                      format: date-time
+        '403':
+          description: 'Akses ditolak (bukan admin).'
+
+  /admin/leave-history/search:
+    get:
+      summary: "Admin: Search for employee's non-annual leave history"
+      description: 'Mengambil riwayat penggunaan cuti non-tahunan karyawan lain berdasarkan kriteria.'
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: employeeId
+          in: query
+          schema:
+            type: string
+          description: 'GUID dari karyawan.'
+        - name: email
+          in: query
+          schema:
+            type: string
+          description: 'Email karyawan.'
+        - name: name
+          in: query
+          schema:
+            type: string
+          description: 'Nama karyawan.'
+        - name: year
+          in: query
+          schema:
+            type: string
+          description: 'Tahun untuk memfilter riwayat cuti (contoh: 2023).'
+        - name: type
+          in: query
+          schema:
+            type: string
+          description: 'Nama jenis cuti untuk memfilter (contoh: Cuti Sakit).'
+      responses:
+        '200':
+          description: Riwayat cuti berhasil diambil.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    leave_type_name:
+                      type: string
+                    start_date:
+                      type: string
+                      format: date
+                    end_date:
+                      type: string
+                      format: date
+                    number_of_days:
+                      type: integer
+        '403':
+          description: 'Akses ditolak (bukan admin).'
+
+  /developments:
+    get:
+      summary: Get Own Project History
+      description: Mengambil riwayat keterlibatan proyek dan pengembangan (training, sertifikasi) milik user yang sedang login.
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Riwayat proyek berhasil diambil.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      format: uuid
+                    title:
+                      type: string
+                    type_code:
+                      type: integer
+                    type_label:
+                      type: string
+                      enum: [Project, Training, Certification, Onboarding, Unknown]
+                    start_date:
+                      type: string
+                      format: date
+                    end_date:
+                      type: string
+                      format: date
+                    involvement_percentage:
+                      type: string
+                    client_name:
+                      type: string
+                      nullable: true
+                    project_manager_name:
+                      type: string
+                      nullable: true
+                    created_by_name:
+                      type: string
+                      nullable: true
+                    last_updated_on:
+                      type: string
+                      format: date-time
+                  example:
+                    id: "f81d4fae-7dec-11d0-a765-00a0c91e6bf6"
+                    title: "Implementasi Dynamics 365"
+                    type_code: 273700000
+                    type_label: "Project"
+                    start_date: "2023-01-15"
+                    end_date: "2023-06-30"
+                    involvement_percentage: "80%"
+                    client_name: "PT Sejahtera Abadi"
+                    project_manager_name: "John Doe"
+                    created_by_name: "Admin User"
+                    last_updated_on: "2023-07-01T10:00:00Z"
+        '401':
+          description: Tidak terautentikasi.
+
+  /admin/developments/search:
+    get:
+      summary: "Admin: Search Project History"
+      description: Admin dapat mencari riwayat proyek/pengembangan milik karyawan berdasarkan email atau nama.
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: email
+          in: query
+          schema:
+            type: string
+          description: "Email karyawan yang ingin dicari."
+        - name: name
+          in: query
+          schema:
+            type: string
+          description: "Nama karyawan yang ingin dicari."
+      responses:
+        '200':
+          description: Riwayat proyek karyawan berhasil diambil.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/paths/~1developments/get/responses/200/content/application~1json/schema/items'
+        '400':
+          description: Parameter query 'email' atau 'name' tidak disediakan.
+        '401':
+          description: Tidak terautentikasi.
+        '403':
+          description: Akses ditolak (bukan admin).
+        '404':
+          description: Karyawan dengan email/nama tersebut tidak ditemukan.
+
+  /summary-peer-review:
+    get:
+      summary: "Get Own Summary Peer Reviews"
+      description: Mengambil data summary peer review milik pengguna yang sedang login.
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Data summary peer review berhasil diambil.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SummaryPeerReview'
+        '401':
+          description: Tidak terautentikasi.
+
+  /admin/summary-peer-review/search:
+    get:
+      summary: "Admin: Search Summary Peer Reviews"
+      description: "(Admin) Mencari data summary peer review milik karyawan berdasarkan kriteria."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: employeeId
+          in: query
+          schema:
+            type: string
+          description: 'GUID dari karyawan.'
+        - name: email
+          in: query
+          schema:
+            type: string
+          description: 'Email karyawan.'
+        - name: name
+          in: query
+          schema:
+            type: string
+          description: 'Nama karyawan.'
+      responses:
+        '200':
+          description: Data summary peer review berhasil diambil.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SummaryPeerReview'
+        '400':
+          description: Parameter pencarian tidak disediakan.
+        '401':
+          description: Tidak terautentikasi.
+        '403':
+          description: Akses ditolak (bukan admin).
+        '404':
+          description: Karyawan tidak ditemukan.
+
+components:
+  schemas:
+    SummaryPeerReview:
+      type: object
+      properties:
+        project_name:
+          type: string
+          nullable: true
+        employee_name:
+          type: string
+          nullable: true
+        project_start_date:
+          type: string
+          format: date
+        project_end_date:
+          type: string
+          format: date
+        total_peer_review:
+          type: integer
+        average_rating:
+          type: number
+          format: double
+      example:
+        project_name: "Website Revamp"
+        employee_name: "Budi Santoso"
+        project_start_date: "2024-01-10"
+        project_end_date: "2024-06-30"
+        total_peer_review: 5
+        average_rating: 4.5
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: sessionId
+      description: Autentikasi berbasis sesi cookie untuk interaksi via browser.
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Autentikasi berbasis Bearer Token (API Key) untuk agent AI atau sistem eksternal.
+          description: 'Bulan untuk memfilter cuti (YYYY-MM). Contoh: 2025-12. Jika digunakan, akan mengabaikan startDate/endDate.'
+        - name: year
+          in: query
+          schema:
+            type: string
+            pattern: '^\\d{4}
+
+  /admin/leave-requests/search:
+    get:
+      summary: "Admin: Search for employee's leave requests"
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: employeeId
+          in: query
+          schema:
+            type: string
+          description: 'GUID dari karyawan.'
+        - name: email
+          in: query
+          schema:
+            type: string
+          description: 'Email karyawan.'
+        - name: name
+          in: query
+          schema:
+            type: string
+          description: 'Nama karyawan.'
+      responses:
+        '200':
+          description: Daftar permintaan cuti karyawan berhasil diambil.
+        '403':
+          description: 'Akses ditolak (bukan admin).'
+
+  /admin/leave-balance/search:
+    get:
+      summary: "Admin: Search for employee's leave balance"
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: period
+          in: query
+          required: true
+          schema:
+            type: string
+          description: 'Periode tahun yang ingin diperiksa (contoh: 2023).'
+        - name: employeeId
+          in: query
+          schema:
+            type: string
+          description: 'GUID dari karyawan.'
+        - name: email
+          in: query
+          schema:
+            type: string
+          description: 'Email karyawan.'
+        - name: name
+          in: query
+          schema:
+            type: string
+          description: 'Nama karyawan.'
+      responses:
+        '200':
+          description: Daftar saldo cuti karyawan berhasil diambil.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    leave_type_id:
+                      type: string
+                    leave_type_name:
+                      type: string
+                    quota:
+                      type: integer
+                    balance:
+                      type: integer
+                    end_date:
+                      type: string
+                      format: date-time
+        '403':
+          description: 'Akses ditolak (bukan admin).'
+
+  /admin/leave-history/search:
+    get:
+      summary: "Admin: Search for employee's non-annual leave history"
+      description: 'Mengambil riwayat penggunaan cuti non-tahunan karyawan lain berdasarkan kriteria.'
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: employeeId
+          in: query
+          schema:
+            type: string
+          description: 'GUID dari karyawan.'
+        - name: email
+          in: query
+          schema:
+            type: string
+          description: 'Email karyawan.'
+        - name: name
+          in: query
+          schema:
+            type: string
+          description: 'Nama karyawan.'
+        - name: year
+          in: query
+          schema:
+            type: string
+          description: 'Tahun untuk memfilter riwayat cuti (contoh: 2023).'
+        - name: type
+          in: query
+          schema:
+            type: string
+          description: 'Nama jenis cuti untuk memfilter (contoh: Cuti Sakit).'
+      responses:
+        '200':
+          description: Riwayat cuti berhasil diambil.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    leave_type_name:
+                      type: string
+                    start_date:
+                      type: string
+                      format: date
+                    end_date:
+                      type: string
+                      format: date
+                    number_of_days:
+                      type: integer
+        '403':
+          description: 'Akses ditolak (bukan admin).'
+
+  /developments:
+    get:
+      summary: Get Own Project History
+      description: Mengambil riwayat keterlibatan proyek dan pengembangan (training, sertifikasi) milik user yang sedang login.
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Riwayat proyek berhasil diambil.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      format: uuid
+                    title:
+                      type: string
+                    type_code:
+                      type: integer
+                    type_label:
+                      type: string
+                      enum: [Project, Training, Certification, Onboarding, Unknown]
+                    start_date:
+                      type: string
+                      format: date
+                    end_date:
+                      type: string
+                      format: date
+                    involvement_percentage:
+                      type: string
+                    client_name:
+                      type: string
+                      nullable: true
+                    project_manager_name:
+                      type: string
+                      nullable: true
+                    created_by_name:
+                      type: string
+                      nullable: true
+                    last_updated_on:
+                      type: string
+                      format: date-time
+                  example:
+                    id: "f81d4fae-7dec-11d0-a765-00a0c91e6bf6"
+                    title: "Implementasi Dynamics 365"
+                    type_code: 273700000
+                    type_label: "Project"
+                    start_date: "2023-01-15"
+                    end_date: "2023-06-30"
+                    involvement_percentage: "80%"
+                    client_name: "PT Sejahtera Abadi"
+                    project_manager_name: "John Doe"
+                    created_by_name: "Admin User"
+                    last_updated_on: "2023-07-01T10:00:00Z"
+        '401':
+          description: Tidak terautentikasi.
+
+  /admin/developments/search:
+    get:
+      summary: "Admin: Search Project History"
+      description: Admin dapat mencari riwayat proyek/pengembangan milik karyawan berdasarkan email atau nama.
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: email
+          in: query
+          schema:
+            type: string
+          description: "Email karyawan yang ingin dicari."
+        - name: name
+          in: query
+          schema:
+            type: string
+          description: "Nama karyawan yang ingin dicari."
+      responses:
+        '200':
+          description: Riwayat proyek karyawan berhasil diambil.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/paths/~1developments/get/responses/200/content/application~1json/schema/items'
+        '400':
+          description: Parameter query 'email' atau 'name' tidak disediakan.
+        '401':
+          description: Tidak terautentikasi.
+        '403':
+          description: Akses ditolak (bukan admin).
+        '404':
+          description: Karyawan dengan email/nama tersebut tidak ditemukan.
+
+  /summary-peer-review:
+    get:
+      summary: "Get Own Summary Peer Reviews"
+      description: Mengambil data summary peer review milik pengguna yang sedang login.
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Data summary peer review berhasil diambil.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SummaryPeerReview'
+        '401':
+          description: Tidak terautentikasi.
+
+  /admin/summary-peer-review/search:
+    get:
+      summary: "Admin: Search Summary Peer Reviews"
+      description: "(Admin) Mencari data summary peer review milik karyawan berdasarkan kriteria."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: employeeId
+          in: query
+          schema:
+            type: string
+          description: 'GUID dari karyawan.'
+        - name: email
+          in: query
+          schema:
+            type: string
+          description: 'Email karyawan.'
+        - name: name
+          in: query
+          schema:
+            type: string
+          description: 'Nama karyawan.'
+      responses:
+        '200':
+          description: Data summary peer review berhasil diambil.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SummaryPeerReview'
+        '400':
+          description: Parameter pencarian tidak disediakan.
+        '401':
+          description: Tidak terautentikasi.
+        '403':
+          description: Akses ditolak (bukan admin).
+        '404':
+          description: Karyawan tidak ditemukan.
+
+components:
+  schemas:
+    SummaryPeerReview:
+      type: object
+      properties:
+        project_name:
+          type: string
+          nullable: true
+        employee_name:
+          type: string
+          nullable: true
+        project_start_date:
+          type: string
+          format: date
+        project_end_date:
+          type: string
+          format: date
+        total_peer_review:
+          type: integer
+        average_rating:
+          type: number
+          format: double
+      example:
+        project_name: "Website Revamp"
+        employee_name: "Budi Santoso"
+        project_start_date: "2024-01-10"
+        project_end_date: "2024-06-30"
+        total_peer_review: 5
+        average_rating: 4.5
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: sessionId
+      description: Autentikasi berbasis sesi cookie untuk interaksi via browser.
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Autentikasi berbasis Bearer Token (API Key) untuk agent AI atau sistem eksternal.
+          description: 'Tahun untuk memfilter cuti (YYYY). Contoh: 2025. Jika digunakan, akan mengabaikan startDate/endDate dan month.'
       responses:
         '200':
           description: Daftar permintaan cuti berhasil diambil.
