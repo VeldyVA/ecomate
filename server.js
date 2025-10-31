@@ -75,7 +75,8 @@ fastify.register(fastifySession, {
 const dataverseBaseUrl = process.env.DATAVERSE_URL; // ex: https://ecomindo365.crm5.dynamics.com
 const tenantId = process.env.AZURE_TENANT_ID;
 const clientId = process.env.AZURE_CLIENT_ID;
-const ADMIN_EMAILS = process.env.ADMIN_EMAILS.split(","); // ex: admin1@company.com,admin2@company.com
+const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || "").split(",");
+const CO_ADMIN_EMAILS = (process.env.CO_ADMIN_EMAILS || "").split(",");
 
 // ==============================
 // 🔹 Konfigurasi MSAL dengan Delegated
@@ -207,7 +208,12 @@ fastify.get("/auth/callback", async (req, reply) => {
     }
     
     const employeeId = userData.value[0]._ecom_fullname_value;
-    const userRole = isAdmin(userEmail) ? "admin" : "employee";
+    let userRole = "employee";
+    if (isAdmin(userEmail)) {
+      userRole = "admin";
+    } else if (isCoAdmin(userEmail)) {
+      userRole = "co_admin";
+    }
     
     // Simpan info penting di session
     req.session.employee_id = employeeId;
@@ -445,6 +451,10 @@ const transporter = nodemailer.createTransport({
 // ==============================
 function isAdmin(email) {
   return ADMIN_EMAILS.includes(email.toLowerCase());
+}
+
+function isCoAdmin(email) {
+  return CO_ADMIN_EMAILS.includes(email.toLowerCase());
 }
 
 // ==============================
@@ -1588,8 +1598,8 @@ fastify.post("/leave/requests/:leaveId/cancel", { preValidation: [fastify.authen
 // 🔹 Admin: List all leave requests
 // ==============================
 fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, async (req, reply) => {
-  if (req.user.role !== "admin") {
-    return reply.code(403).send({ message: "Admin only" });
+  if (!["admin", "co_admin"].includes(req.user.role)) {
+    return reply.code(403).send({ message: "Admin access required." });
   }
 
   try {
@@ -1657,8 +1667,8 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
 // ==============================
 
 fastify.get("/admin/leave-requests/search", { preValidation: [fastify.authenticate] }, async (req, reply) => {
-  if (req.user.role !== "admin") {
-    return reply.code(403).send({ message: "Admin only" });
+  if (!["admin", "co_admin"].includes(req.user.role)) {
+    return reply.code(403).send({ message: "Admin access required." });
   }
 
   const { employeeId, email, name } = req.query;
@@ -1962,8 +1972,8 @@ fastify.get("/developments", { preValidation: [fastify.authenticate] }, async (r
 // 🔹 Development History: Admin Search
 // ==============================
 fastify.get("/admin/developments/search", { preValidation: [fastify.authenticate] }, async (req, reply) => {
-  if (req.user.role !== "admin") {
-    return reply.code(403).send({ message: "Admin access only." });
+  if (!["admin", "co_admin"].includes(req.user.role)) {
+    return reply.code(403).send({ message: "Admin access required." });
   }
 
   const { email, name } = req.query;
