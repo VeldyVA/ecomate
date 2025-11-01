@@ -735,9 +735,15 @@ async function checkForOverlappingLeave(req, employeeGuid, newStartDate, newEndD
     const newStart = new Date(newStartDate);
     const newEnd = new Date(newEndDate);
 
-    // Status: Waiting for PM/SM/SPV, Waiting for HR, Approved
-    const activeStatuses = [273700000, 273700001, 273700002];
-    const statusFilter = activeStatuses.map(s => `ecom_leavestatus eq ${s}`).join(' or ');
+    // Defines statuses that block new leave requests.
+    // This check intentionally allows new requests to overlap with 'Rejected' (273700003) and 'Cancelled' (273700004) leaves.
+    const blockingStatuses = [
+        273700000, // Waiting for PM/SM/SPV Approval
+        273700001, // Waiting for HR Manager Approval
+        273700002, // Approved
+        273700005  // Draft
+    ];
+    const statusFilter = blockingStatuses.map(s => `ecom_leavestatus eq ${s}`).join(' or ');
 
     const existingLeaves = await dataverseRequest(req, "get", "ecom_employeeleaves", {
         params: {
