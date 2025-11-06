@@ -17,7 +17,8 @@ const fastify = Fastify({ logger: true });
 fastify.register(fastifyCors, {
   origin: true, // or specify a specific origin
   credentials: true,
-  methods: ['GET', 'PUT', 'POST', 'PATCH', 'DELETE', 'OPTIONS']
+  methods: ['GET', 'PUT', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 });
 
 // Create OTP directory if it doesn't exist
