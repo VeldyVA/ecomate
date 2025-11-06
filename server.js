@@ -21,6 +21,26 @@ fastify.register(fastifyCors, {
   allowedHeaders: ['Content-Type', 'Authorization']
 });
 
+// Custom JSON parser to allow empty body for PATCH requests
+fastify.addContentTypeParser('application/json', { parseAs: 'string' }, function (req, body, done) {
+  if (!body || body.trim() === '') {
+    if (req.method === 'PATCH') {
+      return done(null, {});
+    }
+    const err = new Error("Body cannot be empty when content-type is set to 'application/json'");
+    err.statusCode = 400;
+    return done(err, undefined);
+  }
+  try {
+    const json = JSON.parse(body);
+    done(null, json);
+  } catch (e) {
+    const err = new Error('Invalid JSON: ' + e.message);
+    err.statusCode = 400;
+    done(err, undefined);
+  }
+});
+
 // Workaround for clients that do not send Content-Type
 fastify.addHook('preParsing', (req, reply, payload, done) => {
   if (!req.headers['content-type'] && (req.method === 'POST' || req.method === 'PATCH' || req.method === 'PUT')) {
