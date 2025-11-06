@@ -642,6 +642,7 @@ fastify.get("/admin/profile/search", { preValidation: [fastify.authenticate] }, 
 
 // 5. PATCH update profile (Admin only)
 fastify.patch("/profile/:employeeId", { preValidation: [fastify.authenticate] }, async (req, reply) => {
+  fastify.log.info(req.body, "DEBUG: Received body for PATCH profile");
   if (req.user.role !== "admin") {
     return reply.code(403).send({ message: "Admin only" });
   }
