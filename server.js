@@ -853,6 +853,7 @@ fastify.get("/leave/balance", { preValidation: [fastify.authenticate] }, async (
       leave_type_name: leaveTypes[i]?.ecom_name || "(unknown)",
       quota: leaveTypes[i]?.ecom_quota || 0,
       balance: item.ecom_balance,
+      start_date: item.ecom_startdate,
       end_date: item.ecom_enddate
     }));
 
@@ -948,6 +949,7 @@ fastify.get("/admin/leave-balance/search", { preValidation: [fastify.authenticat
       leave_type_name: leaveTypes[i]?.ecom_name || "(unknown)",
       quota: leaveTypes[i]?.ecom_quota || 0,
       balance: item.ecom_balance,
+      start_date: item.ecom_startdate,
       end_date: item.ecom_enddate
     }));
 
