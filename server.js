@@ -21,6 +21,14 @@ fastify.register(fastifyCors, {
   allowedHeaders: ['Content-Type', 'Authorization']
 });
 
+// Workaround for clients that do not send Content-Type
+fastify.addHook('preParsing', (req, reply, payload, done) => {
+  if (!req.headers['content-type'] && (req.method === 'POST' || req.method === 'PATCH' || req.method === 'PUT')) {
+    req.headers['content-type'] = 'application/json';
+  }
+  done(null, payload);
+});
+
 // Create OTP directory if it doesn't exist
 const otpDir = path.join('/tmp', 'otps');
 if (!fs.existsSync(otpDir)) {
