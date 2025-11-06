@@ -8,10 +8,17 @@ import dotenv from "dotenv";
 import fs from "fs";
 import path from "path";
 import { ConfidentialClientApplication } from "@azure/msal-node";
+import fastifyCors from "@fastify/cors";
 
 dotenv.config();
 
 const fastify = Fastify({ logger: true });
+
+fastify.register(fastifyCors, {
+  origin: true, // or specify a specific origin
+  credentials: true,
+  methods: ['GET', 'PUT', 'POST', 'PATCH', 'DELETE', 'OPTIONS']
+});
 
 // Create OTP directory if it doesn't exist
 const otpDir = path.join('/tmp', 'otps');
