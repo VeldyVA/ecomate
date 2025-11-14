@@ -199,6 +199,10 @@ fastify.get("/auth/callback", async (req, reply) => {
     url: req.raw.url // log raw url
   });
 
+   // 🔥 Tambahkan ini (cek secret sebelum SIGN JWT)
+  fastify.log.info("== SIGNING JWT ==");
+  fastify.log.info("JWT_SECRET during SIGN:", process.env.JWT_SECRET);
+
   const code = req.query.code;
   if (!code) {
     fastify.log.error("FATAL: /auth/callback was called without an authorization code.");
@@ -499,6 +503,10 @@ function isCoAdmin(email) {
 fastify.decorate("authenticate", async (req, reply) => {
   fastify.log.info({ headers: req.headers }, "DEBUG: Incoming headers for authentication");
 
+  // 🔥 Tambahkan log ini (cek secret sebelum VERIFY JWT)
+  fastify.log.info("== VERIFYING JWT ==");
+  fastify.log.info("JWT_SECRET during VERIFY:", process.env.JWT_SECRET);
+  
   // Prioritaskan otentikasi via API Key (JWT) dari header
   if (req.headers.authorization) {
     fastify.log.info("Authentication: Authorization header found.");
