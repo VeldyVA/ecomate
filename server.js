@@ -527,12 +527,14 @@ fastify.decorate("authenticate", async (req, reply) => {
         return; // Sukses, lanjut ke handler
       } catch (err) {
         // Log detail error dan token yang bermasalah
-        fastify.log.warn({
-          msg: `Authentication: JWT verification failed: ${err.message}`,
+        const loadedSecret = process.env.JWT_SECRET || "Not Set!";
+        fastify.log.error({
+          msg: `CRITICAL: JWT verification failed. This is often due to an incorrect JWT_SECRET environment variable. ${err.message}`,
           token: token,
-          error_details: { name: err.name, message: err.message, stack: err.stack }
+          error_details: { name: err.name, message: err.message },
+          secret_check: `Secret used for verification starts with [${loadedSecret.substring(0, 4)}] and ends with [${loadedSecret.slice(-4)}]`
         });
-        return reply.code(401).send({ error: "Invalid API Key." });
+        return reply.code(401).send({ error: "Invalid or expired API Key. Please re-authenticate." });
       }
     } else {
       // Jika format header bukan 'Bearer <token>' dan token tidak bisa diekstrak
