@@ -252,6 +252,10 @@ fastify.get("/auth/callback", async (req, reply) => {
 
     // Buat JWT jangka panjang (API Key)
     const userPayload = { employeeId, email: userEmail, role: userRole };
+
+    // Log the payload right before signing
+    fastify.log.info({ msg: "JWT_PAYLOAD_CHECK", payload: userPayload });
+
     const longLivedJwt = await fastify.jwt.sign(userPayload, { expiresIn: '90d' });
 
     // 🔥 Log terstruktur baru untuk debugging secret mismatch
