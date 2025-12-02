@@ -193,10 +193,6 @@ fastify.get("/auth/callback", async (req, reply) => {
     url: req.raw.url // log raw url
   });
 
-   // 🔥 Tambahkan ini (cek secret sebelum SIGN JWT)
-  fastify.log.info("== SIGNING JWT ==");
-  fastify.log.info("JWT_SECRET during SIGN:", process.env.JWT_SECRET);
-
   const code = req.query.code;
   if (!code) {
     fastify.log.error("FATAL: /auth/callback was called without an authorization code.");
@@ -257,6 +253,13 @@ fastify.get("/auth/callback", async (req, reply) => {
     // Buat JWT jangka panjang (API Key)
     const userPayload = { employeeId, email: userEmail, role: userRole };
     const longLivedJwt = await fastify.jwt.sign(userPayload, { expiresIn: '90d' });
+
+    // 🔥 Log terstruktur baru untuk debugging secret mismatch
+    const loadedSecretForSigning = process.env.JWT_SECRET || "Not Set!";
+    fastify.log.info({
+        msg: "JWT_SIGNING_CHECK",
+        secret_check: `Secret used for SIGNING starts with [${loadedSecretForSigning.substring(0, 4)}] and ends with [${loadedSecretForSigning.slice(-4)}]`
+    });
 
     // Buat OTP untuk ditukar dengan JWT
     const otp = generateOTP();
