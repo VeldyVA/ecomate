@@ -517,7 +517,7 @@ fastify.decorate("authenticate", async (req, reply) => {
           error_details: { name: err.name, message: err.message },
           secret_check: `Secret used for verification starts with [${loadedSecret.substring(0, 4)}] and ends with [${loadedSecret.slice(-4)}]`
         });
-        return reply.code(401).send({ error: "Invalid or expired API Key. Please re-authenticate." });
+        return reply.code(401).send({ error: "Sesi Anda telah berakhir atau tidak valid. Silakan login kembali.", relogin: true });
       }
     } else {
       // Jika format header bukan 'Bearer <token>' dan token tidak bisa diekstrak
@@ -552,7 +552,7 @@ fastify.decorate("authenticate", async (req, reply) => {
   }
 
   // Jika semua gagal
-  return reply.code(401).send({ error: "Not authenticated. Please login or provide an API Key." });
+  return reply.code(401).send({ error: "Autentikasi diperlukan. Silakan login.", relogin: true });
 });
 
 
@@ -700,6 +700,14 @@ fastify.get("/healthz", async (req, reply) => {
 });
 
 fastify.get('/favicon.ico', (request, reply) => {
+  reply.code(204).send();
+});
+
+fastify.get('/apple-touch-icon-precomposed.png', (request, reply) => {
+  reply.code(204).send();
+});
+
+fastify.get('/apple-touch-icon.png', (request, reply) => {
   reply.code(204).send();
 });
 
