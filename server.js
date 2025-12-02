@@ -248,10 +248,10 @@ fastify.get("/auth/callback", async (req, reply) => {
     // Simpan info penting di session
     req.session.employee_id = employeeId;
     req.session.email = userEmail;
-    req.session.user_role = userRole;
+    req.session.permission = userRole;
 
     // Buat JWT jangka panjang (API Key)
-    const userPayload = { employeeId, email: userEmail, user_role: userRole };
+    const userPayload = { employeeId, email: userEmail, permission: userRole };
 
     // Log the payload right before signing
     fastify.log.info({ msg: "JWT_PAYLOAD_CHECK", payload: userPayload });
@@ -505,8 +505,8 @@ fastify.decorate("authenticate", async (req, reply) => {
     if (token) {
       try {
         const decoded = fastify.jwt.verify(token);
-        req.user = decoded; // payload JWT kita berisi: { employeeId, email, user_role }
-        fastify.log.info(`Authentication: JWT verified for user ${decoded.email} with role ${decoded.user_role}.`);
+        req.user = decoded; // payload JWT kita berisi: { employeeId, email, permission }
+        fastify.log.info(`Authentication: JWT verified for user ${decoded.email} with permission ${decoded.permission}.`);
         return; // Sukses, lanjut ke handler
       } catch (err) {
         // Log detail error dan token yang bermasalah
@@ -533,7 +533,7 @@ fastify.decorate("authenticate", async (req, reply) => {
     req.user = {
       employeeId: req.session.employee_id,
       email: req.session.email,
-      user_role: req.session.user_role
+      permission: req.session.permission
     };
     return; // Sukses, lanjut ke handler
   }
@@ -581,7 +581,7 @@ fastify.get("/whoami", { preValidation: [fastify.authenticate] }, async (request
 // ==============================
 fastify.get("/admin/profile/search", { preValidation: [fastify.authenticate] }, async (req, reply) => {
   console.log("Request received at /admin/profile/search"); // New log
-  if (req.user.user_role !== "admin") {
+  if (req.user.permission !== "admin") {
     return reply.code(403).send({ message: "Admin only" });
   }
 
@@ -636,7 +636,7 @@ fastify.get("/admin/profile/search", { preValidation: [fastify.authenticate] }, 
 // 5. PATCH update profile (Admin only)
 fastify.patch("/profile/:employeeId", { preValidation: [fastify.authenticate] }, async (req, reply) => {
   fastify.log.info(req.body, "DEBUG: Received body for PATCH profile");
-  if (req.user.user_role !== "admin") {
+  if (req.user.permission !== "admin") {
     return reply.code(403).send({ message: "Admin only" });
   }
 
@@ -873,7 +873,7 @@ fastify.get("/leave/balance", { preValidation: [fastify.authenticate] }, async (
 // 🔹 Admin: Search for employee's leave balance
 // ==============================
 fastify.get("/admin/leave-balance/search", { preValidation: [fastify.authenticate] }, async (req, reply) => {
-  if (req.user.user_role !== "admin") {
+  if (req.user.permission !== "admin") {
     return reply.code(403).send({ message: "Admin only" });
   }
 
@@ -1613,7 +1613,7 @@ fastify.post("/leave/requests/:leaveId/cancel", { preValidation: [fastify.authen
     const currentUserPersonalInfoId = personalInfoRes.value[0].ecom_personalinformationid;
 
     // === Step 3: Validasi kepemilikan (kecuali admin) ===
-    if (req.user.user_role !== "admin" && leaveRequest._ecom_employee_value !== currentUserPersonalInfoId) {
+    if (req.user.permission !== "admin" && leaveRequest._ecom_employee_value !== currentUserPersonalInfoId) {
       return reply.code(403).send({ message: "You can only cancel your own leave requests." });
     }
 
@@ -1652,7 +1652,7 @@ fastify.post("/leave/requests/:leaveId/cancel", { preValidation: [fastify.authen
 // 🔹 Admin: List all leave requests
 // ==============================
 fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, async (req, reply) => {
-  if (!["admin", "co_admin"].includes(req.user.user_role)) {
+  if (!["admin", "co_admin"].includes(req.user.permission)) {
     return reply.code(403).send({ message: "Admin access required." });
   }
 
@@ -1721,7 +1721,7 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
 // ==============================
 
 fastify.get("/admin/leave-requests/search", { preValidation: [fastify.authenticate] }, async (req, reply) => {
-  if (!["admin", "co_admin"].includes(req.user.user_role)) {
+  if (!["admin", "co_admin"].includes(req.user.permission)) {
     return reply.code(403).send({ message: "Admin access required." });
   }
 
@@ -1875,7 +1875,7 @@ fastify.get("/leave/history", { preValidation: [fastify.authenticate] }, async (
 // 🔹 Admin: Search for employee's non-annual leave history
 // ==============================
 fastify.get("/admin/leave-history/search", { preValidation: [fastify.authenticate] }, async (req, reply) => {
-  if (req.user.user_role !== "admin") {
+  if (req.user.permission !== "admin") {
     return reply.code(403).send({ message: "Admin only" });
   }
 
@@ -2026,7 +2026,7 @@ fastify.get("/developments", { preValidation: [fastify.authenticate] }, async (r
 // 🔹 Development History: Admin Search
 // ==============================
 fastify.get("/admin/developments/search", { preValidation: [fastify.authenticate] }, async (req, reply) => {
-  if (!["admin", "co_admin"].includes(req.user.user_role)) {
+  if (!["admin", "co_admin"].includes(req.user.permission)) {
     return reply.code(403).send({ message: "Admin access required." });
   }
 
@@ -2125,7 +2125,7 @@ fastify.get("/summary-peer-review", { preValidation: [fastify.authenticate] }, a
 // 🔹 Admin: Search Summary Peer Reviews
 // ==============================
 fastify.get("/admin/summary-peer-review/search", { preValidation: [fastify.authenticate] }, async (req, reply) => {
-  if (req.user.user_role !== "admin") {
+  if (req.user.permission !== "admin") {
     return reply.code(403).send({ message: "Admin access only." });
   }
 
