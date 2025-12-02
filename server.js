@@ -9,6 +9,7 @@ import fs from "fs";
 import path from "path";
 import { ConfidentialClientApplication } from "@azure/msal-node";
 import fastifyCors from "@fastify/cors";
+import { kv } from "@vercel/kv";
 
 dotenv.config();
 
@@ -48,13 +49,6 @@ fastify.addHook('preParsing', (req, reply, payload, done) => {
   }
   done(null, payload);
 });
-
-// Create OTP directory if it doesn't exist
-const otpDir = path.join('/tmp', 'otps');
-if (!fs.existsSync(otpDir)) {
-  fs.mkdirSync(otpDir, { recursive: true });
-  fastify.log.info(`Created directory for OTPs: ${otpDir}`);
-}
 
 // Configuration Validation
 let isConfigValid = true;
@@ -266,15 +260,13 @@ fastify.get("/auth/callback", async (req, reply) => {
 
     // Buat OTP untuk ditukar dengan JWT
     const otp = generateOTP();
-    const expiresAt = new Date(new Date().getTime() + 5 * 60000); // 5 menit
-    const otpFilePath = path.join(otpDir, `${otp}.json`);
-    const otpData = JSON.stringify({ jwt: longLivedJwt, expiresAt: expiresAt.toISOString() });
-
+    
     try {
-      fs.writeFileSync(otpFilePath, otpData);
-      fastify.log.info(`OTP ${otp} stored in file.`);
-    } catch (writeErr) {
-      fastify.log.error("❌ Error writing OTP file:", writeErr);
+      // Simpan JWT di Vercel KV dengan OTP sebagai key, berlaku selama 5 menit (300 detik)
+      await kv.set(otp, longLivedJwt, { ex: 300 });
+      fastify.log.info(`OTP ${otp} and JWT stored in Vercel KV.`);
+    } catch (kvErr) {
+      fastify.log.error("❌ Error saving OTP to Vercel KV:", kvErr);
       return reply.status(500).send({ error: "Failed to store authentication session." });
     }
 
@@ -379,37 +371,21 @@ fastify.post("/exchange-otp", async (req, reply) => {
   // Handle OTP with or without hyphen
   otp = otp.replace(/-/g, "");
 
-  const otpFilePath = path.join(otpDir, `${otp}.json`);
-
-  if (!fs.existsSync(otpFilePath)) {
-    return reply.code(404).send({ error: "OTP not found or has expired." });
-  }
-
   try {
-    const otpData = JSON.parse(fs.readFileSync(otpFilePath, 'utf8'));
-    const expiresAt = new Date(otpData.expiresAt);
+    // Ambil JWT dari Vercel KV menggunakan OTP sebagai key
+    const apiKey = await kv.get(otp);
 
-    if (new Date() > expiresAt) {
-      fs.unlinkSync(otpFilePath); // Clean up expired OTP
-      return reply.code(404).send({ error: "OTP not found or has expired." });
+    if (!apiKey) {
+      // Jika tidak ada, berarti OTP salah, sudah digunakan, atau expired
+      return reply.code(404).send({ error: "OTP not found, has expired, or was already used." });
     }
 
-    const apiKey = otpData.jwt;
-
-    // Hapus file OTP setelah berhasil digunakan
-    fs.unlinkSync(otpFilePath);
+    // Hapus OTP dari KV setelah berhasil digunakan untuk mencegah reuse
+    await kv.del(otp);
 
     reply.send({ apiKey });
   } catch (err) {
-    fastify.log.error(`❌ Error processing OTP ${otp}:`, err);
-    // Defensively try to delete the file if it still exists, as it might be corrupt
-    if (fs.existsSync(otpFilePath)) {
-      try {
-        fs.unlinkSync(otpFilePath);
-      } catch (unlinkErr) {
-        fastify.log.error(`❌ Failed to delete corrupt OTP file ${otpFilePath}:`, unlinkErr);
-      }
-    }
+    fastify.log.error(`❌ Error processing OTP ${otp} from Vercel KV:`, err);
     return reply.code(500).send({ error: "Failed to process OTP. The code may be invalid or already used." });
   }
 });
