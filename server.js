@@ -381,6 +381,7 @@ fastify.post("/exchange-otp", async (req, reply) => {
   try {
     // Ambil JWT dari Vercel KV menggunakan OTP sebagai key
     const apiKey = await kv.get(otp);
+    fastify.log.info({ msg: "KV_RETRIEVED_API_KEY_CHECK", apiKey: apiKey });
 
     if (!apiKey) {
       // Jika tidak ada, berarti OTP salah, sudah digunakan, atau expired
