@@ -485,47 +485,38 @@ function isCoAdmin(email) {
 // 🔹 Middleware Auth (diperbarui untuk JWT)
 // ==============================
 fastify.decorate("authenticate", async (req, reply) => {
-  fastify.log.info({ headers: req.headers }, "DEBUG: Incoming headers for authentication");
+  // LANGKAH DIAGNOSIS: Log semua header untuk setiap request yang masuk ke middleware ini
+  fastify.log.info({ msg: "DIAGNOSTIC: Incoming headers for authentication", headers: req.headers });
 
-  // 🔥 Tambahkan log ini (cek secret sebelum VERIFY JWT)
-  fastify.log.info("== VERIFYING JWT ==");
-  fastify.log.info("JWT_SECRET during VERIFY:", process.env.JWT_SECRET);
-  
-  // Prioritaskan otentikasi via API Key (JWT) dari header
-  if (req.headers.authorization) {
-    fastify.log.info("Authentication: Authorization header found.");
-    const parts = req.headers.authorization.split(' ');
-    let token;
+  const authHeader = req.headers.authorization;
 
-    if (parts.length === 2 && parts[0] === 'Bearer') {
-      token = parts[1];
-    } else if (parts.length === 1) {
-      token = parts[0]; // Assume the whole header is the token
+  if (authHeader) {
+    const parts = authHeader.split(' ');
+
+    if (parts.length !== 2 || parts[0] !== 'Bearer') {
+      fastify.log.error({
+        msg: "CRITICAL: Malformed Authorization header. Header must be in 'Bearer <token>' format.",
+        header: authHeader
+      });
+      return reply.code(401).send({ error: "Format token tidak valid. Gunakan format 'Bearer <token>'.", relogin: true });
     }
 
-    if (token) {
-      try {
-        const decoded = fastify.jwt.verify(token);
-        req.user = decoded; // payload JWT kita berisi: { employeeId, email, permission }
-        fastify.log.info(`Authentication: JWT verified for user ${decoded.email} with permission ${decoded.permission}.`);
-        return; // Sukses, lanjut ke handler
-      } catch (err) {
-        // Log detail error dan token yang bermasalah
-        const loadedSecret = process.env.JWT_SECRET || "Not Set!";
-        fastify.log.error({
-          msg: `CRITICAL: JWT verification failed. This is often due to an incorrect JWT_SECRET environment variable. ${err.message}`,
-          token: token,
-          error_details: { name: err.name, message: err.message },
-          secret_check: `Secret used for verification starts with [${loadedSecret.substring(0, 4)}] and ends with [${loadedSecret.slice(-4)}]`
-        });
-        return reply.code(401).send({ error: "Sesi Anda telah berakhir atau tidak valid. Silakan login kembali.", relogin: true });
-      }
-    } else {
-      // Jika format header bukan 'Bearer <token>' dan token tidak bisa diekstrak
-      fastify.log.warn({
-        msg: "Authentication: Malformed Authorization header received or token could not be extracted.",
-        header: req.headers.authorization
+    const token = parts[1];
+
+    try {
+      const decoded = fastify.jwt.verify(token);
+      req.user = decoded; // payload JWT kita berisi: { employeeId, email, permission }
+      fastify.log.info(`Authentication: JWT verified for user ${decoded.email}.`);
+      return; // Sukses
+    } catch (err) {
+      const loadedSecret = process.env.JWT_SECRET || "Not Set!";
+      fastify.log.error({
+        msg: `CRITICAL: JWT verification failed. ${err.message}`,
+        token: token,
+        error_details: { name: err.name, message: err.message },
+        secret_check: `Secret used for verification starts with [${loadedSecret.substring(0, 4)}] and ends with [${loadedSecret.slice(-4)}]`
       });
+      return reply.code(401).send({ error: "Sesi Anda telah berakhir atau tidak valid. Silakan login kembali.", relogin: true });
     }
   }
 
@@ -536,23 +527,14 @@ fastify.decorate("authenticate", async (req, reply) => {
       email: req.session.email,
       permission: req.session.permission
     };
-    return; // Sukses, lanjut ke handler
-  }
-
-  // Fallback ke otentikasi via App Token
-  if (req.headers['x-app-token']) {
-    try {
-      const appToken = await getAppLevelDataverseToken();
-      if (req.headers['x-app-token'] === appToken) {
-        req.user = { role: 'admin' }; // Atau role yang sesuai
-        return; // Sukses, lanjut ke handler
-      }
-    } catch (error) {
-      return reply.code(500).send({ error: "Failed to validate app token" });
-    }
+    fastify.log.info(`Authentication: Success via session cookie for user ${req.user.email}.`);
+    return; // Sukses
   }
 
   // Jika semua gagal
+  fastify.log.warn({
+    msg: "Authentication failed: No valid Authorization header or session cookie found."
+  });
   return reply.code(401).send({ error: "Autentikasi diperlukan. Silakan login.", relogin: true });
 });
 
