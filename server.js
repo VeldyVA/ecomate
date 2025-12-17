@@ -1980,6 +1980,8 @@ fastify.get("/developments", { preValidation: [fastify.authenticate] }, async (r
   const employeeGuid = req.user.employeeId;
 
   try {
+
+// CHORE: Triggering a clean redeployment to ensure environment variable consistency.
     const historyData = await dataverseRequest(req, "get", "ecom_developments", {
       params: {
         $filter: `_ecom_employeeid_value eq ${employeeGuid}`,
