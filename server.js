@@ -25,7 +25,7 @@ fastify.register(fastifyCors, {
 // Custom JSON parser to allow empty body for PATCH requests
 fastify.addContentTypeParser('application/json', { parseAs: 'string' }, function (req, body, done) {
   if (!body || body.trim() === '') {
-    if (req.method === 'PATCH') {
+    if (req.method === 'PATCH' || (req.method === 'POST' && req.url.includes('/cancel'))) {
       return done(null, {});
     }
     const err = new Error("Body cannot be empty when content-type is set to 'application/json'");
