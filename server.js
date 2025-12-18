@@ -485,47 +485,33 @@ function isCoAdmin(email) {
 // 🔹 Middleware Auth (diperbarui untuk JWT)
 // ==============================
 fastify.decorate("authenticate", async (req, reply) => {
-  fastify.log.info({ headers: req.headers }, "DEBUG: Incoming headers for authentication");
+  const authHeader = req.headers.authorization;
 
-  // 🔥 Tambahkan log ini (cek secret sebelum VERIFY JWT)
-  fastify.log.info("== VERIFYING JWT ==");
-  fastify.log.info("JWT_SECRET during VERIFY:", process.env.JWT_SECRET);
-  
   // Prioritaskan otentikasi via API Key (JWT) dari header
-  if (req.headers.authorization) {
-    fastify.log.info("Authentication: Authorization header found.");
-    const parts = req.headers.authorization.split(' ');
-    let token;
+  if (authHeader) {
+    const parts = authHeader.split(" ");
+    let token = parts.length === 2 && parts[0] === "Bearer" ? parts[1].trim() : authHeader.trim();
 
-    if (parts.length === 2 && parts[0] === 'Bearer') {
-      token = parts[1];
-    } else if (parts.length === 1) {
-      token = parts[0]; // Assume the whole header is the token
-    }
-
-    if (token) {
+    // Validasi awal: pastikan token ada dan memiliki struktur JWT (x.y.z)
+    if (token && token.split(".").length === 3) {
       try {
         const decoded = fastify.jwt.verify(token);
         req.user = decoded; // payload JWT kita berisi: { employeeId, email, permission }
         fastify.log.info(`Authentication: JWT verified for user ${decoded.email} with permission ${decoded.permission}.`);
         return; // Sukses, lanjut ke handler
       } catch (err) {
-        // Log detail error dan token yang bermasalah
-        const loadedSecret = process.env.JWT_SECRET || "Not Set!";
+        // Gagal verifikasi (signature salah, expired, dll)
         fastify.log.error({
-          msg: `CRITICAL: JWT verification failed. This is often due to an incorrect JWT_SECRET environment variable. ${err.message}`,
-          token: token,
-          error_details: { name: err.name, message: err.message },
-          secret_check: `Secret used for verification starts with [${loadedSecret.substring(0, 4)}] and ends with [${loadedSecret.slice(-4)}]`
+          msg: "JWT verification failed",
+          token: token, // Log token yang gagal
+          error: err.message
         });
-        return reply.code(401).send({ error: "Sesi Anda telah berakhir atau tidak valid. Silakan login kembali.", relogin: true });
+        return reply.code(401).send({ error: "Token tidak valid atau expired", relogin: true });
       }
     } else {
-      // Jika format header bukan 'Bearer <token>' dan token tidak bisa diekstrak
-      fastify.log.warn({
-        msg: "Authentication: Malformed Authorization header received or token could not be extracted.",
-        header: req.headers.authorization
-      });
+      // Format token salah atau tidak ada token setelah parsing
+      fastify.log.warn({ header: authHeader }, "Malformed Authorization header or empty token.");
+      return reply.code(401).send({ error: "Format token salah" });
     }
   }
 
@@ -536,6 +522,7 @@ fastify.decorate("authenticate", async (req, reply) => {
       email: req.session.email,
       permission: req.session.permission
     };
+    fastify.log.info(`Authentication: Session cookie verified for user ${req.user.email}.`);
     return; // Sukses, lanjut ke handler
   }
 
@@ -545,14 +532,17 @@ fastify.decorate("authenticate", async (req, reply) => {
       const appToken = await getAppLevelDataverseToken();
       if (req.headers['x-app-token'] === appToken) {
         req.user = { role: 'admin' }; // Atau role yang sesuai
+        fastify.log.info("Authentication: App token verified.");
         return; // Sukses, lanjut ke handler
       }
     } catch (error) {
+      fastify.log.error("Failed to validate app token", error);
       return reply.code(500).send({ error: "Failed to validate app token" });
     }
   }
 
-  // Jika semua gagal
+  // Jika semua metode otentikasi gagal
+  fastify.log.warn("Authentication: No valid authentication method found.");
   return reply.code(401).send({ error: "Autentikasi diperlukan. Silakan login.", relogin: true });
 });
 
