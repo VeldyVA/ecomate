@@ -358,7 +358,7 @@ fastify.get("/show-otp", (req, reply) => {
         <div class="container">
           <h1>Authentication Successful!</h1>
           <p>Enter this one-time code in your Pusaka agent:</p>
-          <div class="otp">${otp.slice(0,3)}-${otp.slice(3,6)}</div>
+          <div class="otp">${otp}</div>
           <p class="expiry">This code will expire in 5 minutes.</p>
         </div>
       </body>
