@@ -560,7 +560,27 @@ fastify.get("/app-token", async (req, reply) => {
   }
 });
 
-fastify.get("/whoami", { preValidation: [fastify.authenticate] }, async (request, reply) => {
+fastify.get("/whoami", {
+  preValidation: [fastify.authenticate],
+  schema: {
+    summary: 'Get Current User Identity',
+    description: 'Mengambil informasi identitas user yang sedang login, baik via Cookie maupun API Key.',
+    tags: ['Authentication'],
+    response: {
+      200: {
+        type: 'object',
+        properties: {
+          employeeId: { type: 'string', format: 'uuid' },
+          email: { type: 'string', format: 'email' },
+          permission: { type: 'string' }
+        }
+      }
+    },
+    security: [
+      { Bearer: [] }
+    ]
+  }
+}, async (request, reply) => {
   // Setelah middleware authenticate, req.user sudah pasti ada.
   return request.user;
 });
@@ -1777,7 +1797,74 @@ fastify.get("/admin/leave-requests/search", { preValidation: [fastify.authentica
 });
 
 // 5. Get Own Profile
-fastify.get("/profile/personal-info", { preValidation: [fastify.authenticate] }, async (req, reply) => {
+fastify.get("/profile/personal-info", {
+  preValidation: [fastify.authenticate],
+  schema: {
+    summary: 'Get Own Profile',
+    description: 'Mengambil data personal lengkap milik user yang sedang login.',
+    tags: ['Profile'],
+    response: {
+      200: {
+        type: 'object',
+        properties: {
+          ecom_personalinformationid: { type: 'string', format: 'uuid' },
+          ecom_nik: { type: 'string' },
+          ecom_employeename: { type: 'string' },
+          ecom_gender: { type: 'integer' },
+          ecom_dateofbirth: { type: 'string', format: 'date' },
+          ecom_phonenumber: { type: 'string' },
+          statecode: { type: 'integer' },
+          ecom_startwork: { type: 'string', format: 'date' },
+          ecom_workexperience: { type: 'string' },
+          ecom_dateofemployment: { type: 'string', format: 'date' },
+          ecom_jobtitle: { type: 'string' },
+          ecom_emergencycontactname: { type: 'string' },
+          ecom_emergencycontactaddress: { type: 'string' },
+          ecom_emergencycontractphonenumber: { type: 'string' },
+          ecom_relationship: { type: 'string' },
+          ecom_address: { type: 'string' },
+          ecom_ktpnumber: { type: 'string' },
+          ecom_npwpnumber: { type: 'string' },
+          ecom_profilepicture: { type: 'string', format: 'uri' },
+          ecom_bankaccountnumber: { type: 'string' },
+          ecom_bpjsnumber: { type: 'string' },
+          ecom_bpjstknumber: { type: 'string' },
+          ecom_maritalstatus: { type: 'integer' },
+          ecom_numberofdependent: { type: 'integer' },
+          ecom_placeofbirth: { type: 'string' },
+          ecom_religion: { type: 'string' },
+          ecom_bankname: { type: 'string' },
+          ecom_accountname: { type: 'string' },
+          ecom_personalemail: { type: 'string', format: 'email' },
+          ecom_workemail: { type: 'string', format: 'email' },
+          ecom_insurancenumber: { type: 'string' }
+        }
+      },
+      401: {
+        type: 'object',
+        properties: {
+          message: { type: 'string' }
+        }
+      },
+      404: {
+        type: 'object',
+        properties: {
+          message: { type: 'string' }
+        }
+      },
+      500: {
+        type: 'object',
+        properties: {
+          error: { type: 'string' },
+          details: { type: 'string' }
+        }
+      }
+    },
+    security: [
+      { Bearer: [] }
+    ]
+  }
+}, async (req, reply) => {
   const employeeId = req.user.employeeId;
 
   try {

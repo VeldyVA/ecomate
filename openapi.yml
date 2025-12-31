@@ -1,0 +1,248 @@
+openapi: 3.0.0
+info:
+  title: Ecotech HR API
+  description: 'API untuk layanan HR internal, termasuk profil karyawan dan manajemen cuti.'
+  version: 1.0.0
+servers:
+  - url: http://localhost:3000
+    description: Local Development Server
+paths:
+  /login:
+    get:
+      summary: Initiate Login Flow
+      description: Redirects the user to the Microsoft Azure AD login page for authentication.
+      responses:
+        '302':
+          description: Successfully redirected to Microsoft login page.
+  /auth/callback:
+    get:
+      summary: Authentication Callback & Display OTP
+      description: Handles the callback from Azure AD. On success, displays an HTML page with a 6-digit OTP valid for 5 minutes.
+      responses:
+        '200':
+          description: Success. Displays an HTML page with the OTP code.
+          content:
+            text/html: {}
+        '500':
+          description: Failed to get token from Microsoft.
+  /exchange-otp:
+    post:
+      summary: Exchange OTP for API Key
+      description: Endpoint for AI agents (Pusaka) to exchange a 6-digit OTP for a long-lived API Key (JWT).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                otp:
+                  type: string
+                  description: 6-digit OTP obtained from the callback page.
+              required:
+                - otp
+              example:
+                  otp: "123456"
+      responses:
+        '200':
+          description: Successfully exchanged OTP. Returns an API Key.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  apiKey:
+                    type: string
+                    description: Long-lived API Key (JWT) valid for 90 days.
+        '400':
+          description: OTP not included in the request body.
+        '404':
+          description: Invalid or expired OTP.
+  /whoami:
+    get:
+      summary: Get Current User Identity
+      description: Retrieves the identity information of the currently logged-in user, either via Cookie or API Key.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Identity data successfully retrieved.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  employeeId: { type: 'string', format: 'uuid' }
+                  email: { type: 'string', format: 'email' }
+                  permission: { type: 'string' }
+        '401':
+          description: Unauthorized.
+  /profile/personal-info:
+    get:
+      summary: Get Own Profile
+      description: Retrieves the complete personal data of the currently logged-in user.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Profile data successfully retrieved.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ecom_personalinformationid: { type: 'string', format: 'uuid' }
+                  ecom_nik: { type: 'string' }
+                  ecom_employeename: { type: 'string' }
+                  ecom_gender: { type: 'integer' }
+                  ecom_dateofbirth: { type: 'string', format: 'date' }
+                  ecom_phonenumber: { type: 'string' }
+                  statecode: { type: 'integer' }
+                  ecom_startwork: { type: 'string', format: 'date' }
+                  ecom_workexperience: { type: 'string' }
+                  ecom_dateofemployment: { type: 'string', format: 'date' }
+                  ecom_jobtitle: { type: 'string' }
+                  ecom_emergencycontactname: { type: 'string' }
+                  ecom_emergencycontactaddress: { type: 'string' }
+                  ecom_emergencycontractphonenumber: { type: 'string' }
+                  ecom_relationship: { type: 'string' }
+                  ecom_address: { type: 'string' }
+                  ecom_ktpnumber: { type: 'string' }
+                  ecom_npwpnumber: { type: 'string' }
+                  ecom_profilepicture: { type: 'string', format: 'uri' }
+                  ecom_bankaccountnumber: { type: 'string' }
+                  ecom_bpjsnumber: { type: 'string' }
+                  ecom_bpjstknumber: { type: 'string' }
+                  ecom_maritalstatus: { type: 'integer' }
+                  ecom_numberofdependent: { type: 'integer' }
+                  ecom_placeofbirth: { type: 'string' }
+                  ecom_religion: { type: 'string' }
+                  ecom_bankname: { type: 'string' }
+                  ecom_accountname: { type: 'string' }
+                  ecom_personalemail: { type: 'string', format: 'email' }
+                  ecom_workemail: { type: 'string', format: 'email' }
+                  ecom_insurancenumber: { type: 'string' }
+        '401':
+          description: Unauthorized.
+        '404':
+          description: Data not found.
+        '500':
+          description: Internal Server Error.
+  /admin/profile/search:
+    get:
+      summary: Admin - Search Employee Profile
+      description: (Admin) Retrieves complete personal data of employees based on criteria.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: query
+          schema:
+            type: string
+            format: uuid
+          description: GUID of the employee.
+        - name: code
+          in: query
+          schema:
+            type: string
+          description: Employee Code (e.g., ES-0022).
+        - name: email
+          in: query
+          schema:
+            type: string
+            format: email
+          description: Employee email.
+        - name: name
+          in: query
+          schema:
+            type: string
+          description: Employee name.
+      responses:
+        '200':
+          description: List of employee profiles successfully retrieved.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/paths/~1profile~1personal-info/get/responses/200/content/application~1json~1schema'
+        '403':
+          description: Access denied (not admin).
+        '400':
+          description: At least one of 'id', 'code', 'email', or 'name' must be provided.
+        '404':
+          description: Personal information record not found for the provided criteria.
+        '500':
+          description: Internal Server Error.
+  /profile/{employeeId}:
+    patch:
+      summary: Admin - Update Employee Profile
+      description: (Admin) Updates an employee's personal data.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: employeeId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: GUID of the ecom_personalinformation record of the employee to be updated.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ecom_employeename: { type: 'string' }
+                ecom_gender: { type: 'integer' }
+                ecom_dateofbirth: { type: 'string', format: 'date' }
+                ecom_phonenumber: { type: 'string' }
+                statecode: { type: 'integer' }
+                ecom_startwork: { type: 'string', format: 'date' }
+                ecom_jobtitle: { type: 'string' }
+                ecom_workexperience: { type: 'string' }
+                ecom_dateofemployment: { type: 'string', format: 'date' }
+                ecom_emergencycontactname: { type: 'string' }
+                ecom_emergencycontactaddress: { type: 'string' }
+                ecom_emergencycontractphonenumber: { type: 'string' }
+                ecom_relationship: { type: 'string' }
+                ecom_address: { type: 'string' }
+                ecom_ktpnumber: { type: 'string' }
+                ecom_npwpnumber: { type: 'string' }
+                ecom_profilepicture: { type: 'string', format: 'uri' }
+                ecom_bankaccountnumber: { type: 'string' }
+                ecom_bpjsnumber: { type: 'string' }
+                ecom_insurancenumber: { type: 'string' }
+                ecom_bpjstknumber: { type: 'string' }
+                ecom_maritalstatus: { type: 'integer' }
+                ecom_numberofdependent: { type: 'integer' }
+                ecom_placeofbirth: { type: 'string' }
+                ecom_religion: { type: 'string' }
+                ecom_bankname: { type: 'string' }
+                ecom_accountname: { type: 'string' }
+                ecom_personalemail: { type: 'string', format: 'email' }
+                ecom_workemail: { type: 'string', format: 'email' }
+              example:
+                ecom_employeename: "Budi Santoso"
+                ecom_phonenumber: "081234567890"
+                ecom_jobtitle: "Senior Developer"
+      responses:
+        '200':
+          description: Profile successfully updated.
+        '400':
+          description: No valid fields to update were provided.
+        '403':
+          description: Access denied (not admin).
+        '404':
+          description: Personal information record not found.
+        '500':
+          description: Internal Server Error.
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Authentication based on Bearer Token (API Key) for AI agents or external systems.
