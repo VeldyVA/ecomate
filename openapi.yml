@@ -4,6 +4,8 @@ info:
   description: 'API untuk layanan HR internal, termasuk profil karyawan dan manajemen cuti.'
   version: 1.0.0
 servers:
+  - url: https://ecomate-phi.vercel.app
+    description: Production Server (Vercel)
   - url: http://localhost:3000
     description: Local Development Server
 paths:
