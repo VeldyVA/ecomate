@@ -1,0 +1,168 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Ecotech HR API",
+    "description": "Minimal OpenAPI specification for Ecotech HR API. This version only includes paths and basic summaries/descriptions. Parameters, request bodies, and detailed responses need to be added manually.",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://ecomate-phi.vercel.app",
+      "description": "Production Server (Vercel)"
+    },
+    {
+      "url": "http://localhost:3000",
+      "description": "Local Development Server"
+    }
+  ],
+  "paths": {
+    "/": {
+      "get": {
+        "summary": "Root Redirect"
+      }
+    },
+    "/login": {
+      "get": {
+        "summary": "Initiate Login Flow"
+      }
+    },
+    "/auth/callback": {
+      "get": {
+        "summary": "Authentication Callback & Display OTP"
+      }
+    },
+    "/show-otp": {
+      "get": {
+        "summary": "Display OTP Page"
+      }
+    },
+    "/exchange-otp": {
+      "post": {
+        "summary": "Exchange OTP for API Key"
+      }
+    },
+    "/app-token": {
+      "get": {
+        "summary": "Get Application-Level Token"
+      }
+    },
+    "/whoami": {
+      "get": {
+        "summary": "Get Current User Identity"
+      }
+    },
+    "/admin/profile/search": {
+      "get": {
+        "summary": "Admin - Search Employee Profile"
+      }
+    },
+    "/profile/{employeeId}": {
+      "patch": {
+        "summary": "Admin - Update Employee Profile"
+      }
+    },
+    "/healthz": {
+      "get": {
+        "summary": "Health Check"
+      }
+    },
+    "/favicon.ico": {
+      "get": {
+        "summary": "Favicon"
+      }
+    },
+    "/apple-touch-icon-precomposed.png": {
+      "get": {
+        "summary": "Apple Touch Icon (Precomposed)"
+      }
+    },
+    "/apple-touch-icon.png": {
+      "get": {
+        "summary": "Apple Touch Icon"
+      }
+    },
+    "/leave/balance": {
+      "get": {
+        "summary": "Get User's Leave Balance"
+      }
+    },
+    "/admin/leave-balance/search": {
+      "get": {
+        "summary": "Admin - Search Employee's Leave Balance"
+      }
+    },
+    "/leave/types": {
+      "get": {
+        "summary": "Get All Leave Types"
+      }
+    },
+    "/leave/requests": {
+      "get": {
+        "summary": "Get User's Leave Requests"
+      },
+      "post": {
+        "summary": "Apply for Leave"
+      }
+    },
+    "/leave/requests/special": {
+      "post": {
+        "summary": "Apply for Special Leave (Quota-based)"
+      }
+    },
+    "/leave/requests/{leaveId}/cancel": {
+      "post": {
+        "summary": "Cancel a Leave Request"
+      }
+    },
+    "/admin/leave-requests": {
+      "get": {
+        "summary": "Admin - List All Leave Requests"
+      }
+    },
+    "/admin/leave-requests/search": {
+      "get": {
+        "summary": "Admin - Search Employee's Leave Requests"
+      }
+    },
+    "/leave/history": {
+      "get": {
+        "summary": "Get User's Non-Annual Leave History"
+      }
+    },
+    "/admin/leave-history/search": {
+      "get": {
+        "summary": "Admin - Search Employee's Non-Annual Leave History"
+      }
+    },
+    "/developments": {
+      "get": {
+        "summary": "Get Own Development History"
+      }
+    },
+    "/admin/developments/search": {
+      "get": {
+        "summary": "Admin - Search Employee's Development History"
+      }
+    },
+    "/summary-peer-review": {
+      "get": {
+        "summary": "Get Own Summary Peer Reviews"
+      }
+    },
+    "/admin/summary-peer-review/search": {
+      "get": {
+        "summary": "Admin - Search Summary Peer Reviews"
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Authentication based on Bearer Token (API Key) for AI agents or external systems."
+      }
+    }
+  }
+}
