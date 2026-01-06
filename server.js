@@ -666,10 +666,23 @@ fastify.patch("/profile/:employeeId", { preValidation: [fastify.authenticate] },
       "ecom_religion", "ecom_bankname", "ecom_accountname", "ecom_personalemail", "ecom_workemail"
     ];
 
+    let potentialUpdates = {};
+    if (req.body && typeof req.body.data_update_json === 'string' && req.body.data_update_json.trim() !== '') {
+      try {
+        potentialUpdates = JSON.parse(req.body.data_update_json);
+        fastify.log.info(potentialUpdates, "DEBUG: Parsed updates from data_update_json field");
+      } catch (e) {
+        fastify.log.error(e, "DEBUG: Failed to parse data_update_json string, falling back to use raw body.");
+        potentialUpdates = req.body;
+      }
+    } else {
+      potentialUpdates = req.body;
+    }
+
     const updates = {};
     for (const field of allowedFields) {
-      if (req.body[field] !== undefined) {
-        updates[field] = req.body[field];
+      if (potentialUpdates[field] !== undefined) {
+        updates[field] = potentialUpdates[field];
       }
     }
 
