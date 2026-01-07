@@ -1681,22 +1681,57 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
   }
 
   try {
-    const { startDate, endDate, month, year } = req.query;
+    const { startDate, endDate, month, year, employeeId, email, name } = req.query;
     const filters = [];
 
+    // --- Employee filtering logic ---
+    if (employeeId || (email && email.trim()) || (name && name.trim())) {
+      let employeeFilter;
+      if (employeeId) {
+        employeeFilter = `_ecom_employee_value eq ${employeeId}`;
+      } else {
+        let personalInfoFilter;
+        if (email && email.trim()) {
+          personalInfoFilter = `ecom_workemail eq '${email}'`;
+        } else { // name
+          personalInfoFilter = `ecom_employeename eq '${name}'`;
+        }
+
+        try {
+          const userData = await dataverseRequest(req, "get", "ecom_personalinformations", {
+            params: { $filter: personalInfoFilter, $select: "ecom_personalinformationid" }
+          });
+
+          if (!userData.value || userData.value.length === 0 || !userData.value[0].ecom_personalinformationid) {
+            fastify.log.warn({ msg: "No employee found for filter, returning empty leave list.", filter: personalInfoFilter });
+            return [];
+          }
+          const foundEmployeeId = userData.value[0].ecom_personalinformationid;
+          employeeFilter = `_ecom_employee_value eq ${foundEmployeeId}`;
+        } catch (err) {
+          console.error("❌ Error fetching employee by email/name:", err.response?.data || err.message);
+          return reply.status(500).send({
+            error: "Failed to fetch employee by email/name",
+            details: err.response?.data?.error?.message || err.message,
+          });
+        }
+      }
+      filters.push(employeeFilter);
+    }
+
+    // --- Date filtering logic ---
     let finalStartDate = startDate;
     let finalEndDate = endDate;
 
-    // Handle month and year parameters if explicit date range isn't provided
     if (!finalStartDate && !finalEndDate) {
-      if (month) { // e.g., month=2025-12
+      if (month) {
         const [y, m] = month.split('-').map(Number);
         if (y && m && m >= 1 && m <= 12) {
           finalStartDate = `${y}-${String(m).padStart(2, '0')}-01`;
           const lastDay = new Date(y, m, 0).getDate();
           finalEndDate = `${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
         }
-      } else if (year) { // e.g., year=2025
+      } else if (year) {
         const y = Number(year);
         if (y) {
           finalStartDate = `${y}-01-01`;
@@ -1705,19 +1740,17 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
       }
     }
 
-    // Build the OData filter for overlap
     if (finalStartDate) {
-      // Leaves that end on or after the start of the period
       filters.push(`ecom_enddate ge ${finalStartDate}`);
     }
     if (finalEndDate) {
-      // Leaves that start on or before the end of the period
       filters.push(`ecom_startdate le ${finalEndDate}`);
     }
 
+    // --- Dataverse query ---
     const params = {
       $expand: "ecom_LeaveType($select=ecom_name),ecom_Employee($select=ecom_employeename)",
-      $select: "ecom_name,ecom_startdate,ecom_enddate,ecom_numberofdays,ecom_leavestatus,ecom_pmsmapprovalstatus,ecom_hrapprovalstatus",
+      $select: "ecom_name,ecom_startdate,ecom_enddate,ecom_numberofdays,ecom_leavestatus,ecom_pmsmapprovalstatus,ecom_hrapprovalstatus,ecom_pmsmnote,ecom_hrnote",
       $orderby: "createdon desc"
     };
 
@@ -1735,75 +1768,6 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
     console.error("❌ Error fetching all leave requests:", err.response?.data || err.message);
     reply.status(500).send({
       error: "Failed to fetch all leave requests",
-      details: err.response?.data?.error?.message || err.message,
-    });
-  }
-});
-
-// ==============================
-// 🔹 Admin: Search for employee's leave requests
-// ==============================
-
-fastify.get("/admin/leave-requests/search", { preValidation: [fastify.authenticate] }, async (req, reply) => {
-  if (!["admin", "co_admin"].includes(req.user.permission)) {
-    return reply.code(403).send({ message: "Admin access required." });
-  }
-
-  const { employeeId, email, name } = req.query;
-
-  if (!employeeId && !email && !name) {
-    return reply.code(400).send({ message: "Either employeeId, email or name must be provided." });
-  }
-
-  let employeeFilter;
-  if (employeeId) {
-    employeeFilter = `_ecom_employee_value eq ${employeeId}`;
-  } else {
-    let personalInfoFilter;
-    if (email) {
-      personalInfoFilter = `ecom_workemail eq '${email}'`;
-    } else { // name
-      personalInfoFilter = `ecom_employeename eq '${name}'`;
-    }
-
-    try {
-      const userData = await dataverseRequest(req, "get", "ecom_personalinformations", {
-        params: {
-          $filter: personalInfoFilter,
-          $select: "ecom_personalinformationid"
-        }
-      });
-
-      if (!userData.value || userData.value.length === 0 || !userData.value[0].ecom_personalinformationid) {
-        return reply.code(404).send({ message: `Employee not found for the provided criteria.` });
-      }
-      const foundEmployeeId = userData.value[0].ecom_personalinformationid;
-      employeeFilter = `_ecom_employee_value eq ${foundEmployeeId}`;
-    } catch (err) {
-      console.error("❌ Error fetching employee by email/name:", err.response?.data || err.message);
-      return reply.status(500).send({
-        error: "Failed to fetch employee by email/name",
-        details: err.response?.data?.error?.message || err.message,
-      });
-    }
-  }
-
-  try {
-    const requestsData = await dataverseRequest(req, "get", "ecom_employeeleaves", {
-      params: {
-        $filter: employeeFilter,
-        $expand: "ecom_LeaveType($select=ecom_name)",
-        $select: "ecom_name,ecom_startdate,ecom_enddate,ecom_numberofdays,ecom_reason,ecom_leavestatus,ecom_pmsmapprovalstatus,ecom_pmsmnote,ecom_hrapprovalstatus,ecom_hrnote",
-        $orderby: "createdon desc"
-      }
-    });
-
-    return requestsData.value || [];
-
-  } catch (err) {
-    console.error("❌ Error fetching user leave requests:", err.response?.data || err.message);
-    reply.status(500).send({
-      error: "Failed to fetch leave requests",
       details: err.response?.data?.error?.message || err.message,
     });
   }
