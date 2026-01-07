@@ -1681,94 +1681,115 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
   }
 
   try {
-    const { startDate, endDate, month, year, employeeId, email, name } = req.query;
+    const {
+      startDate,
+      endDate,
+      month,
+      year,
+      employeeId,
+      email,
+      name,
+      "for": forWho // "ai" | undefined
+    } = req.query;
+
     const filters = [];
 
-    // --- Employee filtering logic ---
+    // ==============================
+    //  Employee filtering (AMAN)
+    // ==============================
     if (employeeId || (email && email.trim()) || (name && name.trim())) {
       let employeeFilter;
+
       if (employeeId) {
         employeeFilter = `_ecom_employee_value eq ${employeeId}`;
       } else {
-        let personalInfoFilter;
-        if (email && email.trim()) {
-          personalInfoFilter = `ecom_workemail eq '${email}'`;
-        } else { // name
-          personalInfoFilter = `ecom_employeename eq '${name}'`;
-        }
+        const personalInfoFilter = email
+          ? `ecom_workemail eq '${email}'`
+          : `ecom_employeename eq '${name}'`;
 
-        try {
-          const userData = await dataverseRequest(req, "get", "ecom_personalinformations", {
-            params: { $filter: personalInfoFilter, $select: "ecom_personalinformationid" }
-          });
-
-          if (!userData.value || userData.value.length === 0 || !userData.value[0].ecom_personalinformationid) {
-            fastify.log.warn({ msg: "No employee found for filter, returning empty leave list.", filter: personalInfoFilter });
-            return [];
+        const userData = await dataverseRequest(req, "get", "ecom_personalinformations", {
+          params: {
+            $filter: personalInfoFilter,
+            $select: "ecom_personalinformationid"
           }
-          const foundEmployeeId = userData.value[0].ecom_personalinformationid;
-          employeeFilter = `_ecom_employee_value eq ${foundEmployeeId}`;
-        } catch (err) {
-          console.error("❌ Error fetching employee by email/name:", err.response?.data || err.message);
-          return reply.status(500).send({
-            error: "Failed to fetch employee by email/name",
-            details: err.response?.data?.error?.message || err.message,
-          });
-        }
+        });
+
+        if (!userData.value?.length) return [];
+
+        employeeFilter = `_ecom_employee_value eq ${userData.value[0].ecom_personalinformationid}`;
       }
+
       filters.push(employeeFilter);
     }
 
-    // --- Date filtering logic ---
+    // ==============================
+    //  Date filtering (AMAN)
+    // ==============================
     let finalStartDate = startDate;
     let finalEndDate = endDate;
 
     if (!finalStartDate && !finalEndDate) {
       if (month) {
-        const [y, m] = month.split('-').map(Number);
-        if (y && m && m >= 1 && m <= 12) {
-          finalStartDate = `${y}-${String(m).padStart(2, '0')}-01`;
-          const lastDay = new Date(y, m, 0).getDate();
-          finalEndDate = `${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
-        }
+        const [y, m] = month.split("-").map(Number);
+        const lastDay = new Date(y, m, 0).getDate();
+        finalStartDate = `${y}-${String(m).padStart(2, "0")}-01`;
+        finalEndDate = `${y}-${String(m).padStart(2, "0")}-${lastDay}`;
       } else if (year) {
-        const y = Number(year);
-        if (y) {
-          finalStartDate = `${y}-01-01`;
-          finalEndDate = `${y}-12-31`;
-        }
+        finalStartDate = `${year}-01-01`;
+        finalEndDate = `${year}-12-31`;
       }
     }
 
-    if (finalStartDate) {
-      filters.push(`ecom_enddate ge ${finalStartDate}`);
-    }
-    if (finalEndDate) {
-      filters.push(`ecom_startdate le ${finalEndDate}`);
-    }
+    if (finalStartDate) filters.push(`ecom_enddate ge ${finalStartDate}`);
+    if (finalEndDate) filters.push(`ecom_startdate le ${finalEndDate}`);
 
-    // --- Dataverse query ---
+    // ==============================
+    //  Dataverse query (DIPERKETAT)
+    // ==============================
     const params = {
       $expand: "ecom_LeaveType($select=ecom_name),ecom_Employee($select=ecom_employeename)",
-      $select: "ecom_name,ecom_startdate,ecom_enddate,ecom_numberofdays,ecom_leavestatus,ecom_pmsmapprovalstatus,ecom_hrapprovalstatus,ecom_pmsmnote,ecom_hrnote",
       $orderby: "createdon desc"
     };
 
-    if (filters.length > 0) {
-      params.$filter = filters.join(' and ');
+    //  SELECT BERBEDA UNTUK AI
+    if (forWho === "ai") {
+      params.$select = "ecom_startdate,ecom_enddate,ecom_leavestatus";
+      params.$top = 50; // HARD LIMIT
+    } else {
+      params.$select = `
+        ecom_name,
+        ecom_startdate,
+        ecom_enddate,
+        ecom_numberofdays,
+        ecom_leavestatus,
+        ecom_pmsmapprovalstatus,
+        ecom_hrapprovalstatus
+      `;
     }
 
-    fastify.log.info({ msg: "Fetching admin leave requests with params", params });
+    if (filters.length) params.$filter = filters.join(" and ");
 
     const requestsData = await dataverseRequest(req, "get", "ecom_employeeleaves", { params });
+
+    // ==============================
+    //  AI-FRIENDLY RESPONSE
+    // ==============================
+    if (forWho === "ai") {
+      return (requestsData.value || []).map(item => ({
+        employee: item.ecom_Employee?.ecom_employeename,
+        leaveType: item.ecom_LeaveType?.ecom_name,
+        startDate: item.ecom_startdate,
+        endDate: item.ecom_enddate,
+        status: item.ecom_leavestatus
+      }));
+    }
 
     return requestsData.value || [];
 
   } catch (err) {
-    console.error("❌ Error fetching all leave requests:", err.response?.data || err.message);
-    reply.status(500).send({
-      error: "Failed to fetch all leave requests",
-      details: err.response?.data?.error?.message || err.message,
+    reply.code(500).send({
+      error: "Failed to fetch leave requests",
+      details: err.response?.data?.error?.message || err.message
     });
   }
 });
