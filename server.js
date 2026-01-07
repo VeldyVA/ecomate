@@ -350,17 +350,32 @@ fastify.get("/show-otp", (req, reply) => {
           .container { text-align: center; padding: 40px; background-color: #fff; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
           h1 { color: #333; }
           p { color: #555; }
-          .otp { font-size: 2.5em; font-weight: bold; color: #007bff; letter-spacing: 5px; margin: 20px 0; padding: 10px; background-color: #eef; border-radius: 4px; }
+          .otp { font-size: 2.5em; font-weight: bold; color: #007bff; letter-spacing: 5px; margin: 20px 0; padding: 10px; background-color: #eef; border-radius: 4px; cursor: pointer; user-select: none; }
           .expiry { font-size: 0.9em; color: #999; }
         </style>
       </head>
       <body>
         <div class="container">
           <h1>Authentication Successful!</h1>
-          <p>Enter this one-time code in your Pusaka agent:</p>
-          <div class="otp">${otp}</div>
+          <p>Enter this one-time code in your ecomate agent:</p>
+          <div id="otp-display" class="otp" title="Click to copy">${otp}</div>
           <p class="expiry">This code will expire in 5 minutes.</p>
         </div>
+        <script>
+          const otpElement = document.getElementById('otp-display');
+          otpElement.addEventListener('click', () => {
+            const otpValue = otpElement.innerText;
+            navigator.clipboard.writeText(otpValue).then(() => {
+              const originalText = otpElement.innerText;
+              otpElement.innerText = 'Copied!';
+              setTimeout(() => {
+                otpElement.innerText = originalText;
+              }, 1500);
+            }).catch(err => {
+              console.error('Failed to copy OTP: ', err);
+            });
+          });
+        </script>
       </body>
     </html>
   `);
