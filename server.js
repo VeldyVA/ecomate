@@ -1730,13 +1730,34 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
 
     if (!finalStartDate && !finalEndDate) {
       if (month) {
-        const [y, m] = month.split("-").map(Number);
-        const lastDay = new Date(y, m, 0).getDate();
-        finalStartDate = `${y}-${String(m).padStart(2, "0")}-01`;
-        finalEndDate = `${y}-${String(m).padStart(2, "0")}-${lastDay}`;
+        const monthString = String(month);
+        // Case 1: month is in "YYYY-MM" format
+        if (monthString.includes('-')) {
+          const [y, m] = monthString.split("-").map(Number);
+          if (!isNaN(y) && !isNaN(m)) {
+            const lastDay = new Date(y, m, 0).getDate();
+            finalStartDate = `${y}-${String(m).padStart(2, "0")}-01`;
+            finalEndDate = `${y}-${String(m).padStart(2, "0")}-${lastDay}`;
+          }
+        }
+        // Case 2: month is a name (e.g., "February") and year is provided
+        else if (year) {
+          const monthNames = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+          const monthNumber = monthNames.indexOf(monthString.toLowerCase()) + 1;
+          const yearNumber = parseInt(year, 10);
+
+          if (monthNumber > 0 && !isNaN(yearNumber)) {
+            const lastDay = new Date(yearNumber, monthNumber, 0).getDate();
+            finalStartDate = `${yearNumber}-${String(monthNumber).padStart(2, "0")}-01`;
+            finalEndDate = `${yearNumber}-${String(monthNumber).padStart(2, "0")}-${lastDay}`;
+          }
+        }
       } else if (year) {
-        finalStartDate = `${year}-01-01`;
-        finalEndDate = `${year}-12-31`;
+        const yearNumber = parseInt(year, 10);
+        if (!isNaN(yearNumber)) {
+            finalStartDate = `${yearNumber}-01-01`;
+            finalEndDate = `${yearNumber}-12-31`;
+        }
       }
     }
 
