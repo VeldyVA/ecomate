@@ -1972,12 +1972,25 @@ const transformPositionRecord = (record) => ({
 
 // Get own current position
 fastify.get("/profile/position", { preValidation: [fastify.authenticate] }, async (req, reply) => {
-  const employeeId = req.user.employeeId;
-
   try {
+    // First, get the personalinformationid from the user's email
+    const userEmail = req.user.email;
+    const userData = await dataverseRequest(req, "get", "ecom_personalinformations", {
+        params: {
+            $filter: `ecom_workemail eq '${userEmail}'`,
+            $select: "ecom_personalinformationid"
+        }
+    });
+
+    if (!userData.value || userData.value.length === 0) {
+        return reply.code(404).send({ message: "Personal information record not found for your user." });
+    }
+    const personalInformationId = userData.value[0].ecom_personalinformationid;
+
+    // Now, query the position with the correct ID
     const positionData = await dataverseRequest(req, "get", "ecom_employeepositions", {
       params: {
-        $filter: `_ecom_personalinformation_value eq ${employeeId} and statecode eq 0`,
+        $filter: `_ecom_personalinformation_value eq ${personalInformationId} and statecode eq 0`,
         $select: "ecom_startdate,ecom_grading,statecode",
         $expand: "ecom_JobTitle($select=ecom_jobtitle),ecom_UpdatedBy($select=fullname),ecom_PersonalInformation($select=ecom_employeename)",
         $orderby: "ecom_startdate desc",
