@@ -1962,7 +1962,7 @@ const STATUS_MAP = {
 const transformPositionRecord = (record) => ({
   employee_name: record.ecom_PersonalInformation?.ecom_employeename || null,
   start_date: record.ecom_startdate,
-  position_name: record.ecom_JobTitle?.ecom_name || null,
+  position_name: record.ecom_JobTitle?.ecom_jobtitle || null,
   grade_code: record.ecom_grading,
   grade_label: GRADE_MAP[record.ecom_grading] || 'Unknown',
   status_code: record.statecode,
@@ -1979,7 +1979,7 @@ fastify.get("/profile/position", { preValidation: [fastify.authenticate] }, asyn
       params: {
         $filter: `_ecom_personalinformation_value eq ${employeeId} and statecode eq 0`,
         $select: "ecom_startdate,ecom_grading,statecode",
-        $expand: "ecom_JobTitle($select=ecom_name),ecom_UpdatedBy($select=fullname),ecom_PersonalInformation($select=ecom_employeename)",
+        $expand: "ecom_JobTitle($select=ecom_jobtitle),ecom_UpdatedBy($select=fullname),ecom_PersonalInformation($select=ecom_employeename)",
         $orderby: "ecom_startdate desc",
         $top: 1
       }
@@ -2033,7 +2033,7 @@ fastify.get("/admin/position/search", { preValidation: [fastify.authenticate] },
       params: {
         $filter: `_ecom_personalinformation_value eq ${targetEmployeeId}`,
         $select: "ecom_startdate,ecom_grading,statecode",
-        $expand: "ecom_JobTitle($select=ecom_name),ecom_UpdatedBy($select=fullname),ecom_PersonalInformation($select=ecom_employeename)",
+        $expand: "ecom_JobTitle($select=ecom_jobtitle),ecom_UpdatedBy($select=fullname),ecom_PersonalInformation($select=ecom_employeename)",
         $orderby: "ecom_startdate desc",
       }
     });
