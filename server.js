@@ -1940,6 +1940,121 @@ fastify.get("/profile/personal-info", {
   }
 });
 
+// ==============================
+// 🔹 Position/Grade Mappings & Endpoints
+// ==============================
+const GRADE_MAP = {
+  273700000: "Junior",
+  273700001: "Middle",
+  273700002: "Senior",
+  273700003: "Associate 1",
+  273700004: "Associate 2",
+  273700005: "Consultant",
+  273700006: "Solution Architect",
+  273700007: "Strategic",
+};
+
+const STATUS_MAP = {
+  0: "Active",
+  1: "Inactive",
+};
+
+const transformPositionRecord = (record) => ({
+  employee_name: record.ecom_PersonalInformation?.ecom_employeename || null,
+  start_date: record.ecom_startdate,
+  position_name: record.ecom_JobTitle?.ecom_name || null,
+  grade_code: record.ecom_grading,
+  grade_label: GRADE_MAP[record.ecom_grading] || 'Unknown',
+  status_code: record.statecode,
+  status_label: STATUS_MAP[record.statecode] || 'Unknown',
+  updated_by: record.ecom_UpdatedBy?.fullname || null,
+});
+
+// Get own current position
+fastify.get("/profile/position", { preValidation: [fastify.authenticate] }, async (req, reply) => {
+  const employeeId = req.user.employeeId;
+
+  try {
+    const positionData = await dataverseRequest(req, "get", "ecom_employeepositions", {
+      params: {
+        $filter: `_ecom_personalinformation_value eq ${employeeId} and statecode eq 0`,
+        $select: "ecom_startdate,ecom_grading,statecode",
+        $expand: "ecom_JobTitle($select=ecom_name),ecom_UpdatedBy($select=fullname),ecom_PersonalInformation($select=ecom_employeename)",
+        $orderby: "ecom_startdate desc",
+        $top: 1
+      }
+    });
+
+    if (!positionData.value || positionData.value.length === 0) {
+      return reply.code(404).send({ message: "No active position record found for your user." });
+    }
+
+    const transformedData = transformPositionRecord(positionData.value[0]);
+    return transformedData;
+
+  } catch (err) {
+    fastify.log.error({ msg: "❌ Error fetching own position info", error: err.response?.data || err.message });
+    reply.status(500).send({
+      error: "Failed to fetch position information",
+      details: err.response?.data?.error?.message || err.message,
+    });
+  }
+});
+
+// Admin search for employee position history
+fastify.get("/admin/position/search", { preValidation: [fastify.authenticate] }, async (req, reply) => {
+  if (!["admin", "co_admin"].includes(req.user.permission)) {
+    return reply.code(403).send({ message: "Admin access required." });
+  }
+
+  const { employeeId, email, name } = req.query;
+  if (!employeeId && !email && !name) {
+    return reply.code(400).send({ message: "Either employeeId, email, or name must be provided." });
+  }
+
+  try {
+    let targetEmployeeId;
+
+    if (employeeId) {
+      targetEmployeeId = employeeId;
+    } else {
+      const personalInfoFilter = email ? `ecom_workemail eq '${email}'` : `ecom_employeename eq '${name}'`;
+      const userData = await dataverseRequest(req, "get", "ecom_personalinformations", {
+        params: { $filter: personalInfoFilter, $select: "ecom_personalinformationid" }
+      });
+
+      if (!userData.value || userData.value.length === 0) {
+        return reply.code(404).send({ message: "Employee not found for the provided criteria." });
+      }
+      targetEmployeeId = userData.value[0].ecom_personalinformationid;
+    }
+
+    const positionData = await dataverseRequest(req, "get", "ecom_employeepositions", {
+      params: {
+        $filter: `_ecom_personalinformation_value eq ${targetEmployeeId}`,
+        $select: "ecom_startdate,ecom_grading,statecode",
+        $expand: "ecom_JobTitle($select=ecom_name),ecom_UpdatedBy($select=fullname),ecom_PersonalInformation($select=ecom_employeename)",
+        $orderby: "ecom_startdate desc",
+      }
+    });
+
+    if (!positionData.value || positionData.value.length === 0) {
+      return [];
+    }
+
+    const transformedData = positionData.value.map(transformPositionRecord);
+    return transformedData;
+
+  } catch (err) {
+    fastify.log.error({ msg: "❌ Error in admin position search", error: err.response?.data || err.message });
+    reply.status(500).send({
+      error: "Failed to search position information",
+      details: err.response?.data?.error?.message || err.message,
+    });
+  }
+});
+
+
 
 
 

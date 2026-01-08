@@ -115,6 +115,52 @@ paths:
         '200':
           description: Personal info returned
 
+  /profile/position:
+    get:
+      tags:
+        - Profile
+      summary: Get own current position and grade
+      description: Retrieves the most recent active position and grade for the logged-in user.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Current active position and grade.
+        '404':
+          description: No active position record found.
+
+  /admin/position/search:
+    get:
+      tags:
+        - Admin
+      summary: Search for an employee's position history
+      description: Retrieves the entire position and grade history for a specific employee.
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: employeeId
+          schema:
+            type: string
+          description: 'Search by the employee''s personal information GUID.'
+        - in: query
+          name: email
+          schema:
+            type: string
+          description: 'Search by the employee''s work email address.'
+        - in: query
+          name: name
+          schema:
+            type: string
+          description: 'Search by the employee''s name.'
+      responses:
+        '200':
+          description: A list of historical position records for the employee.
+        '400':
+          description: One of the search parameters must be provided.
+        '404':
+          description: Employee not found.
+
   /leave/types:
     get:
       tags:
