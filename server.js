@@ -1090,7 +1090,7 @@ fastify.get("/leave/requests", { preValidation: [fastify.authenticate] }, async 
       params: {
         $filter: `_ecom_employee_value eq ${currentUserPersonalInfoId}`,
         $expand: "ecom_LeaveType($select=ecom_name)",
-        $select: "ecom_name,ecom_startdate,ecom_enddate,ecom_numberofdays,ecom_reason,ecom_leavestatus,ecom_pmsmapprovalstatus,ecom_pmsmnote,ecom_hrapprovalstatus,ecom_hrnote",
+        $select: "ecom_employeeleaveid,ecom_name,ecom_startdate,ecom_enddate,ecom_numberofdays,ecom_reason,ecom_leavestatus,ecom_pmsmapprovalstatus,ecom_pmsmnote,ecom_hrapprovalstatus,ecom_hrnote",
         $orderby: "createdon desc"
       }
     });
@@ -1793,6 +1793,7 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
       params.$top = 50; // HARD LIMIT
     } else {
       params.$select = `
+        ecom_employeeleaveid,
         ecom_name,
         ecom_startdate,
         ecom_enddate,
