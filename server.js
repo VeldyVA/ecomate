@@ -1240,8 +1240,9 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
       ecom_returndate: returnDateStr, // Add return date
       ecom_numberofdays: days,
       ecom_reason: reason || null
-    };;
+    };
 
+    fastify.log.info({ msg: "REGULAR LEAVE: Creating leave request with data", data: newLeaveRequest });
     const inserted = await dataverseRequest(req, "post", "ecom_employeeleaves", { data: newLeaveRequest });
 
     // === 8. Ambil systemuserid dari systemuser (berdasarkan email user) ===
@@ -1540,6 +1541,7 @@ fastify.post("/leave/requests/special", { preValidation: [fastify.authenticate] 
       ecom_reason: reason || null
     };
 
+    fastify.log.info({ msg: "SPECIAL LEAVE: Creating leave request with data", data: newLeaveRequest });
     const inserted = await dataverseRequest(req, "post", "ecom_employeeleaves", { data: newLeaveRequest });
 
     // === 7. Trigger Power Automate ===
@@ -1572,6 +1574,10 @@ fastify.post("/leave/requests/special", { preValidation: [fastify.authenticate] 
                     }
                 });
                 fastify.log.info(`✅ Linked leave request ${inserted.ecom_employeeleaveid} to balance records.`);
+            } else {
+                fastify.log.warn(
+                    `⚠️ No leave balance records found for ${employeeGuid} (${leaveYear}/${parseInt(leaveYear) + 1}). Flow may fail.`
+                );
             }
         } catch (err) {
             fastify.log.error("❌ Failed to link leave to balances:", err.message);
