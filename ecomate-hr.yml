@@ -182,12 +182,35 @@ paths:
       responses:
         '200':
           description: Leave requests list
-
-  /leave/requests/special:
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    ecom_leaverequestid:
+                      type: string
+                      description: Primary identifier for the leave request (UUID)
+                    ecom_name:
+                      type: string
+                    ecom_startdate:
+                      type: string
+                      format: date
+                    ecom_enddate:
+                      type: string
+                      format: date
+                    ecom_numberofdays:
+                      type: number
+                    ecom_leavestatus:
+                      type: integer
+        '401':
+          description: Unauthorized
     post:
       tags:
         - Leave
-      summary: Apply for special leave
+      summary: Apply for annual leave
+      description: Allows employees to apply for annual leave, subject to available balance, weekend start date validation, and overlapping leave checks.
       security:
         - BearerAuth: []
       requestBody:
@@ -203,18 +226,96 @@ paths:
               properties:
                 leave_typeid:
                   type: string
+                  description: The GUID of the leave type (e.g., annual leave).
                 start_date:
                   type: string
                   format: date
+                  description: The start date of the leave in YYYY-MM-DD format.
                 days:
                   type: integer
+                  description: The number of days requested for leave.
                 reason:
                   type: string
+                  nullable: true
+                  description: Optional reason for the leave.
       responses:
         '201':
-          description: Leave created
+          description: Leave request submitted successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  balance_remaining:
+                    type: number
+                  data:
+                    type: object # Placeholder for the inserted leave record
         '400':
-          description: Validation error
+          description: Validation error. Possible reasons include: 'leaveTypeId, startDate, and days are required.', ''days' must be a positive integer.', 'Start date cannot be in the past.', 'Start date falls on a weekend.', 'No personal record found for employee.', 'No leave balance found for employee in year.', 'No leave balance record found for leave type in year.', 'Insufficient balance.', 'The requested leave dates overlap with an existing leave request.'
+        '401':
+          description: Unauthorized.
+        '404':
+          description: Resource not found (e.g., employee, leave type, or balance).
+        '500':
+          description: Internal server error.
+
+  /leave/requests/special:
+    post:
+      tags:
+        - Leave
+      summary: Apply for special leave (e.g., marriage, bereavement, etc.)
+      description: Allows employees to apply for special leave types that may have specific eligibility rules (e.g., tenure, quota per period) and do not deduct from annual leave balance. Includes validation for weekend start dates, overlapping leaves, and specific leave type rules.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - leave_typeid
+                - start_date
+                - days
+              properties:
+                leave_typeid:
+                  type: string
+                  description: The GUID of the special leave type.
+                start_date:
+                  type: string
+                  format: date
+                  description: The start date of the leave in YYYY-MM-DD format.
+                days:
+                  type: integer
+                  description: The number of days requested for leave.
+                reason:
+                  type: string
+                  nullable: true
+                  description: Optional reason for the leave.
+      responses:
+        '201':
+          description: Special leave request submitted successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  data:
+                    type: object # Placeholder for the inserted leave record
+        '400':
+          description: Validation error. Possible reasons include: 'leaveTypeId, startDate, and days are required.', ''days' must be a positive integer.', 'Start date cannot be in the past.', 'Start date falls on a weekend.', 'The requested leave dates overlap with an existing leave request.', 'Not eligible for long leave. Minimum X years of service required.', 'Long leave for the X-year service period has expired.', 'Request exceeds the X-day total quota for the current eligibility window.', 'Leave type does not use a quota system.'
+        '401':
+          description: Unauthorized.
+        '403':
+          description: Forbidden (e.g., not eligible for long leave due to tenure or expired window).
+        '404':
+          description: Resource not found (e.g., employee, leave type).
+        '500':
+          description: Internal server error.
 
   /leave/requests/{leaveId}/cancel:
     post:
