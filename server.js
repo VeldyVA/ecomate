@@ -1811,23 +1811,38 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
 
     const requestsData = await dataverseRequest(req, "get", "ecom_employeeleaves", { params });
 
+    // Normalize ID field for backward compatibility (some environments use ecom_employeeleaveid)
+    const rows = (requestsData.value || []).map(item => {
+      if (!item.ecom_leaverequestid && item.ecom_employeeleaveid) {
+        item.ecom_leaverequestid = item.ecom_employeeleaveid;
+      }
+      return item;
+    });
+
     // ==============================
     //  AI-FRIENDLY RESPONSE
     // ==============================
     if (forWho === "ai") {
-      return (requestsData.value || []).map(item => ({
+      return rows.map(item => ({
         employee: item.ecom_Employee?.ecom_employeename,
         leaveType: item.ecom_LeaveType?.ecom_name,
         startDate: item.ecom_startdate,
         endDate: item.ecom_enddate,
-        status: item.ecom_leavestatus
+        status: item.ecom_leavestatus,
+        ecom_leaverequestid: item.ecom_leaverequestid
       }));
     }
 
-    return requestsData.value || [];
+    return rows;
 
   } catch (err) {
-    reply.code(500).send({
+    fastify.log.error({
+      msg: "❌ Failed to fetch leave requests",
+      error: err.response?.data || err.message,
+      stack: err.stack
+    });
+
+    return reply.code(500).send({
       error: "Failed to fetch leave requests",
       details: err.response?.data?.error?.message || err.message
     });
