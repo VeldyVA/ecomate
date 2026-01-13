@@ -291,6 +291,28 @@ paths:
       responses:
         '200':
           description: A list of leave requests.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    ecom_leaverequestid:
+                      type: string
+                      description: Primary identifier for the leave request (UUID)
+                    ecom_name:
+                      type: string
+                    ecom_startdate:
+                      type: string
+                      format: date
+                    ecom_enddate:
+                      type: string
+                      format: date
+                    ecom_numberofdays:
+                      type: number
+                    ecom_leavestatus:
+                      type: integer
         '403':
           description: Admin access required.
 
@@ -303,8 +325,28 @@ paths:
         - BearerAuth: []
       responses:
         '200':
-          description: Leave history
-
+          description: Leave history          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    ecom_leaverequestid:
+                      type: string
+                      description: Primary identifier for the leave request (UUID)
+                    ecom_name:
+                      type: string
+                    ecom_startdate:
+                      type: string
+                      format: date
+                    ecom_enddate:
+                      type: string
+                      format: date
+                    ecom_numberofdays:
+                      type: number
+                    ecom_leavestatus:
+                      type: integer
   /admin/leave-history/search:
     get:
       tags:

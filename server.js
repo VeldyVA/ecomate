@@ -396,7 +396,8 @@ fastify.post("/exchange-otp", async (req, reply) => {
   try {
     // Ambil JWT dari Vercel KV menggunakan OTP sebagai key
     const apiKey = await kv.get(otp);
-    fastify.log.info({ msg: "KV_RETRIEVED_API_KEY_CHECK", apiKey: apiKey });
+    // Do not log the actual API key to avoid leaking credentials
+    fastify.log.info({ msg: "KV_RETRIEVED_API_KEY_CHECK" });
 
     if (!apiKey) {
       // Jika tidak ada, berarti OTP salah, sudah digunakan, atau expired
@@ -1090,7 +1091,7 @@ fastify.get("/leave/requests", { preValidation: [fastify.authenticate] }, async 
       params: {
         $filter: `_ecom_employee_value eq ${currentUserPersonalInfoId}`,
         $expand: "ecom_LeaveType($select=ecom_name)",
-        $select: "ecom_name,ecom_startdate,ecom_enddate,ecom_numberofdays,ecom_reason,ecom_leavestatus,ecom_pmsmapprovalstatus,ecom_pmsmnote,ecom_hrapprovalstatus,ecom_hrnote",
+        $select: "ecom_leaverequestid,ecom_name,ecom_startdate,ecom_enddate,ecom_numberofdays,ecom_reason,ecom_leavestatus,ecom_pmsmapprovalstatus,ecom_pmsmnote,ecom_hrapprovalstatus,ecom_hrnote",
         $orderby: "createdon desc"
       }
     });
@@ -1789,10 +1790,13 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
 
     //  SELECT BERBEDA UNTUK AI
     if (forWho === "ai") {
-      params.$select = "ecom_startdate,ecom_enddate,ecom_leavestatus";
+      // Include the primary key for AI consumers so they can identify requests to cancel
+      params.$select = "ecom_leaverequestid,ecom_startdate,ecom_enddate,ecom_leavestatus";
       params.$top = 50; // HARD LIMIT
     } else {
+      // Ensure we include the primary key so admin clients can act on items (e.g., cancel)
       params.$select = `
+        ecom_leaverequestid,
         ecom_name,
         ecom_startdate,
         ecom_enddate,
