@@ -1087,16 +1087,35 @@ fastify.get("/leave/requests", { preValidation: [fastify.authenticate] }, async 
     }
     const currentUserPersonalInfoId = personalInfoRes.value[0].ecom_personalinformationid;
 
-    const requestsData = await dataverseRequest(req, "get", "ecom_employeeleaves", {
-      params: {
-        $filter: `_ecom_employee_value eq ${currentUserPersonalInfoId}`,
-        $expand: "ecom_LeaveType($select=ecom_name)",
-        $select: "ecom_leaverequestid,ecom_name,ecom_startdate,ecom_enddate,ecom_numberofdays,ecom_reason,ecom_leavestatus,ecom_pmsmapprovalstatus,ecom_pmsmnote,ecom_hrapprovalstatus,ecom_hrnote",
-        $orderby: "createdon desc"
+    // Try to fetch user leave requests, retrying with legacy ID name if necessary
+    const userParams = {
+      $filter: `_ecom_employee_value eq ${currentUserPersonalInfoId}`,
+      $expand: "ecom_LeaveType($select=ecom_name)",
+      $select: "ecom_leaverequestid,ecom_name,ecom_startdate,ecom_enddate,ecom_numberofdays,ecom_reason,ecom_leavestatus,ecom_pmsmapprovalstatus,ecom_pmsmnote,ecom_hrapprovalstatus,ecom_hrnote",
+      $orderby: "createdon desc"
+    };
+
+    let requestsData;
+    try {
+      requestsData = await dataverseRequest(req, "get", "ecom_employeeleaves", { params: userParams });
+    } catch (err) {
+      const msg = err.response?.data?.error?.message || '';
+      if (msg.includes('ecom_leaverequestid') || msg.includes('Could not find a property')) {
+        fastify.log.warn({ msg: 'ecom_leaverequestid not present for user query; retrying with ecom_employeeleaveid' });
+        userParams.$select = userParams.$select.replace(/ecom_leaverequestid/g, 'ecom_employeeleaveid');
+        requestsData = await dataverseRequest(req, "get", "ecom_employeeleaves", { params: userParams });
+      } else {
+        throw err;
       }
+    }
+
+    // Normalize to ecom_leaverequestid when legacy field is used
+    const rows = (requestsData.value || []).map(item => {
+      if (!item.ecom_leaverequestid && item.ecom_employeeleaveid) item.ecom_leaverequestid = item.ecom_employeeleaveid;
+      return item;
     });
 
-    return requestsData.value || [];
+    return rows;
 
   } catch (err) {
     console.error("❌ Error fetching user leave requests:", err.response?.data || err.message);
@@ -1809,7 +1828,24 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
 
     if (filters.length) params.$filter = filters.join(" and ");
 
-    const requestsData = await dataverseRequest(req, "get", "ecom_employeeleaves", { params });
+    // Fetch leave rows with a fallback for environments that use a legacy PK name
+    let requestsData;
+    try {
+      requestsData = await dataverseRequest(req, "get", "ecom_employeeleaves", { params });
+    } catch (err) {
+      const msg = err.response?.data?.error?.message || '';
+      // If Dataverse complains about missing property, retry with legacy field name
+      if (msg.includes('ecom_leaverequestid') || msg.includes('Could not find a property')) {
+        fastify.log.warn({ msg: 'ecom_leaverequestid not present in schema; retrying with ecom_employeeleaveid' });
+        // Replace occurrences in the select clause
+        if (params.$select) {
+          params.$select = params.$select.replace(/ecom_leaverequestid/g, 'ecom_employeeleaveid');
+        }
+        requestsData = await dataverseRequest(req, "get", "ecom_employeeleaves", { params });
+      } else {
+        throw err; // rethrow and let outer catch handle
+      }
+    }
 
     // Normalize ID field for backward compatibility (some environments use ecom_employeeleaveid)
     const rows = (requestsData.value || []).map(item => {
