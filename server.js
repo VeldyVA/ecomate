@@ -1111,7 +1111,13 @@ fastify.get("/leave/requests", { preValidation: [fastify.authenticate] }, async 
 
     // Normalize to ecom_leaverequestid when legacy field is used
     const rows = (requestsData.value || []).map(item => {
-      if (!item.ecom_leaverequestid && item.ecom_employeeleaveid) item.ecom_leaverequestid = item.ecom_employeeleaveid;
+      if (!item.ecom_leaverequestid && item.ecom_employeeleaveid) {
+        item.ecom_leaverequestid = item.ecom_employeeleaveid;
+      }
+      // Ensure date is in ISO format
+      if (item.ecom_updatedon) {
+        item.ecom_updatedon = new Date(item.ecom_updatedon).toISOString();
+      }
       return item;
     });
 
@@ -1859,6 +1865,10 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
       if (!item.ecom_leaverequestid && item.ecom_employeeleaveid) {
         item.ecom_leaverequestid = item.ecom_employeeleaveid;
       }
+      // Ensure date is in ISO format
+      if (item.ecom_updatedon) {
+        item.ecom_updatedon = new Date(item.ecom_updatedon).toISOString();
+      }
       return item;
     });
 
@@ -1872,7 +1882,8 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
         startDate: item.ecom_startdate,
         endDate: item.ecom_enddate,
         status: item.ecom_leavestatus,
-        ecom_leaverequestid: item.ecom_leaverequestid
+        ecom_leaverequestid: item.ecom_leaverequestid,
+        ecom_updatedon: item.ecom_updatedon
       }));
     }
 
