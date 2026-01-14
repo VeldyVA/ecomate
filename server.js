@@ -1091,14 +1091,13 @@ fastify.get("/leave/requests", { preValidation: [fastify.authenticate] }, async 
     const userParams = {
       $filter: `_ecom_employee_value eq ${currentUserPersonalInfoId}`,
       $expand: "ecom_LeaveType($select=ecom_name)",
-      $select: "ecom_leaverequestid,ecom_name,ecom_startdate,ecom_enddate,ecom_numberofdays,ecom_reason,ecom_leavestatus,ecom_pmsmapprovalstatus,ecom_pmsmnote,ecom_hrapprovalstatus,ecom_hrnote,ecom_updatedon",
+      $select: "ecom_leaverequestid,ecom_name,ecom_startdate,ecom_enddate,ecom_numberofdays,ecom_reason,ecom_leavestatus,ecom_pmsmapprovalstatus,ecom_pmsmnote,ecom_hrapprovalstatus,createdon",
       $orderby: "createdon desc"
     };
 
     let requestsData;
     try {
       requestsData = await dataverseRequest(req, "get", "ecom_employeeleaves", { params: userParams });
-      fastify.log.info({ msg: "Raw Dataverse response for user leave requests", data: requestsData.value });
     } catch (err) {
       const msg = err.response?.data?.error?.message || '';
       if (msg.includes('ecom_leaverequestid') || msg.includes('Could not find a property')) {
@@ -1116,8 +1115,8 @@ fastify.get("/leave/requests", { preValidation: [fastify.authenticate] }, async 
         item.ecom_leaverequestid = item.ecom_employeeleaveid;
       }
       // Ensure date is in ISO format
-      if (item.ecom_updatedon) {
-        item.ecom_updatedon = new Date(item.ecom_updatedon).toISOString();
+      if (item.createdon) {
+        item.createdon = new Date(item.createdon).toISOString();
       }
       return item;
     });
@@ -1823,7 +1822,7 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
     //  SELECT BERBEDA UNTUK AI
     if (forWho === "ai") {
       // Include the primary key for AI consumers so they can identify requests to cancel
-      params.$select = "ecom_leaverequestid,ecom_startdate,ecom_enddate,ecom_leavestatus,ecom_updatedon";
+      params.$select = "ecom_leaverequestid,ecom_startdate,ecom_enddate,ecom_leavestatus,createdon";
       params.$top = 50; // HARD LIMIT
     } else {
       // Ensure we include the primary key so admin clients can act on items (e.g., cancel)
@@ -1836,7 +1835,7 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
         ecom_leavestatus,
         ecom_pmsmapprovalstatus,
         ecom_hrapprovalstatus,
-        ecom_updatedon
+        createdon
       `;
     }
 
@@ -1846,7 +1845,6 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
     let requestsData;
     try {
       requestsData = await dataverseRequest(req, "get", "ecom_employeeleaves", { params });
-      fastify.log.info({ msg: "Raw Dataverse response for admin leave requests", data: requestsData.value });
     } catch (err) {
       const msg = err.response?.data?.error?.message || '';
       // If Dataverse complains about missing property, retry with legacy field name
@@ -1885,7 +1883,7 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
         endDate: item.ecom_enddate,
         status: item.ecom_leavestatus,
         ecom_leaverequestid: item.ecom_leaverequestid,
-        ecom_updatedon: item.ecom_updatedon
+        createdon: item.createdon
       }));
     }
 
