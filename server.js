@@ -1098,6 +1098,7 @@ fastify.get("/leave/requests", { preValidation: [fastify.authenticate] }, async 
     let requestsData;
     try {
       requestsData = await dataverseRequest(req, "get", "ecom_employeeleaves", { params: userParams });
+      fastify.log.info({ msg: "Raw Dataverse response for user leave requests", data: requestsData.value });
     } catch (err) {
       const msg = err.response?.data?.error?.message || '';
       if (msg.includes('ecom_leaverequestid') || msg.includes('Could not find a property')) {
@@ -1845,6 +1846,7 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
     let requestsData;
     try {
       requestsData = await dataverseRequest(req, "get", "ecom_employeeleaves", { params });
+      fastify.log.info({ msg: "Raw Dataverse response for admin leave requests", data: requestsData.value });
     } catch (err) {
       const msg = err.response?.data?.error?.message || '';
       // If Dataverse complains about missing property, retry with legacy field name
