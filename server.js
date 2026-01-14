@@ -1091,7 +1091,7 @@ fastify.get("/leave/requests", { preValidation: [fastify.authenticate] }, async 
     const userParams = {
       $filter: `_ecom_employee_value eq ${currentUserPersonalInfoId}`,
       $expand: "ecom_LeaveType($select=ecom_name)",
-      $select: "ecom_leaverequestid,ecom_name,ecom_startdate,ecom_enddate,ecom_numberofdays,ecom_reason,ecom_leavestatus,ecom_pmsmapprovalstatus,ecom_pmsmnote,ecom_hrapprovalstatus,ecom_hrnote,ecom_updateon",
+      $select: "ecom_leaverequestid,ecom_name,ecom_startdate,ecom_enddate,ecom_numberofdays,ecom_reason,ecom_leavestatus,ecom_pmsmapprovalstatus,ecom_pmsmnote,ecom_hrapprovalstatus,ecom_hrnote,ecom_updatedon",
       $orderby: "createdon desc"
     };
 
@@ -1816,7 +1816,7 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
     //  SELECT BERBEDA UNTUK AI
     if (forWho === "ai") {
       // Include the primary key for AI consumers so they can identify requests to cancel
-      params.$select = "ecom_leaverequestid,ecom_startdate,ecom_enddate,ecom_leavestatus,ecom_updateon";
+      params.$select = "ecom_leaverequestid,ecom_startdate,ecom_enddate,ecom_leavestatus,ecom_updatedon";
       params.$top = 50; // HARD LIMIT
     } else {
       // Ensure we include the primary key so admin clients can act on items (e.g., cancel)
@@ -1829,7 +1829,7 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
         ecom_leavestatus,
         ecom_pmsmapprovalstatus,
         ecom_hrapprovalstatus,
-        ecom_updateon
+        ecom_updatedon
       `;
     }
 
