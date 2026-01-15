@@ -702,7 +702,7 @@ fastify.patch("/profile/:employeeId", { preValidation: [fastify.authenticate] },
   try {
     const allowedFields = [
       "ecom_employeename", "ecom_gender", "ecom_dateofbirth",
-      "ecom_phonenumber", "statecode", "ecom_startwork", "ecom_jobtitle",
+      "ecom_phonenumber", "statecode", "ecom_startwork",
       "ecom_workexperience", "ecom_dateofemployment",
       "ecom_emergencycontactname", "ecom_emergencycontactaddress", "ecom_emergencycontractphonenumber",
       "ecom_relationship", "ecom_address", "ecom_ktpnumber", "ecom_npwpnumber",
