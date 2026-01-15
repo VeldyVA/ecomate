@@ -2382,7 +2382,7 @@ fastify.get("/admin/summary-peer-review/search", { preValidation: [fastify.authe
       if (email) {
         userFilter = `internalemailaddress eq '${email}'`;
       } else { // name
-        userFilter = `fullname eq '${name}'`;
+        userFilter = `contains(fullname, '${name}')`;
       }
 
       const userRes = await dataverseRequest(req, "get", "systemusers", {
