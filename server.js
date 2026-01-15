@@ -633,15 +633,14 @@ fastify.get("/admin/profile/search", { preValidation: [fastify.authenticate] }, 
         $filter: filter,
         $select: [
           "ecom_personalinformationid", "ecom_nik", "ecom_employeename", "ecom_gender", "ecom_dateofbirth",
-          "ecom_phonenumber", "statecode", "ecom_startwork",
+          "ecom_phonenumber", "statecode", "ecom_startwork", "ecom_jobtitle",
           "ecom_workexperience", "ecom_dateofemployment",
           "ecom_emergencycontactname", "ecom_emergencycontactaddress", "ecom_emergencycontractphonenumber",
           "ecom_relationship", "ecom_address", "ecom_ktpnumber", "ecom_npwpnumber",
           "ecom_profilepicture", "ecom_bankaccountnumber", "ecom_bpjsnumber", "ecom_insurancenumber",
           "ecom_bpjstknumber", "ecom_maritalstatus", "ecom_numberofdependent", "ecom_placeofbirth",
           "ecom_religion", "ecom_bankname", "ecom_accountname", "ecom_personalemail", "ecom_workemail"
-        ].join(","),
-        $expand: "ecom_jobtitle($select=ecom_jobtitle)"
+        ].join(",")
       }
     });
 
@@ -649,18 +648,7 @@ fastify.get("/admin/profile/search", { preValidation: [fastify.authenticate] }, 
       return reply.code(404).send({ message: "Personal information record not found for the provided criteria." });
     }
 
-    // Flatten the job title from the expanded grade/competency table
-    const results = personalInfoData.value.map(profile => {
-        if (profile.ecom_jobtitle && profile.ecom_jobtitle.ecom_jobtitle) {
-            profile.ecom_jobtitle = profile.ecom_jobtitle.ecom_jobtitle;
-        } else {
-            // If expand fails or returns no name, avoid sending back a complex object
-            profile.ecom_jobtitle = null;
-        }
-        return profile;
-    });
-
-    return results;
+    return personalInfoData.value;
 
   } catch (err) {
     console.error("❌ Error searching employee profile:", err.response ? JSON.stringify(err.response.data, null, 2) : err.message);
@@ -1997,34 +1985,24 @@ fastify.get("/profile/personal-info", {
           $select: [
           "ecom_personalinformationid", "ecom_nik", "ecom_employeename", "ecom_gender", "ecom_dateofbirth",
           "ecom_phonenumber", "statecode", "ecom_startwork",
-          "ecom_workexperience", "ecom_dateofemployment",
+          "ecom_workexperience", "ecom_dateofemployment", "ecom_jobtitle",
           "ecom_emergencycontactname", "ecom_emergencycontactaddress", "ecom_emergencycontractphonenumber",
           "ecom_relationship", "ecom_address", "ecom_ktpnumber", "ecom_npwpnumber",
           "ecom_profilepicture", "ecom_bankaccountnumber", "ecom_bpjsnumber",
           "ecom_bpjstknumber", "ecom_maritalstatus", "ecom_numberofdependent", "ecom_placeofbirth",
           "ecom_religion", "ecom_bankname", "ecom_accountname", "ecom_personalemail", "ecom_workemail", "ecom_insurancenumber"
-          ].join(","),
-          $expand: "ecom_jobtitle($select=ecom_jobtitle)"
+          ].join(",")
         }
       }
     );
 
     if (!data.value || data.value.length === 0) {
       fastify.log.warn(`Profile not found for employeeId: ${employeeId}`);
-      return reply.code(404).send({ message: "Profile not found." });
+      return reply.code(404).send({ message: "Personal information record not found for your user." });
     }
 
-    const profile = data.value[0];
-
-    // Flatten the job title from the expanded grade/competency table
-    if (profile.ecom_jobtitle && profile.ecom_jobtitle.ecom_jobtitle) {
-        profile.ecom_jobtitle = profile.ecom_jobtitle.ecom_jobtitle;
-    } else {
-        // If expand fails or returns no name, avoid sending back a complex object
-        profile.ecom_jobtitle = null;
-    }
-
-    return profile;
+    // Return the single record object, not the array
+    return data.value[0];
 
   } catch (err) {
     console.error("❌ Error fetching own profile:", err.response?.data || err.message);
