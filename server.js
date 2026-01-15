@@ -633,7 +633,7 @@ fastify.get("/admin/profile/search", { preValidation: [fastify.authenticate] }, 
         $filter: filter,
         $select: [
           "ecom_personalinformationid", "ecom_nik", "ecom_employeename", "ecom_gender", "ecom_dateofbirth",
-          "ecom_phonenumber", "statecode", "ecom_startwork", "ecom_jobtitle",
+          "ecom_phonenumber", "statecode", "ecom_startwork",
           "ecom_workexperience", "ecom_dateofemployment",
           "ecom_emergencycontactname", "ecom_emergencycontactaddress", "ecom_emergencycontractphonenumber",
           "ecom_relationship", "ecom_address", "ecom_ktpnumber", "ecom_npwpnumber",
@@ -648,7 +648,44 @@ fastify.get("/admin/profile/search", { preValidation: [fastify.authenticate] }, 
       return reply.code(404).send({ message: "Personal information record not found for the provided criteria." });
     }
 
-    return personalInfoData.value;
+    const profiles = personalInfoData.value;
+    const personalInformationIds = profiles.map(p => p.ecom_personalinformationid);
+
+    // Fetch latest job titles for all found profiles in a single optimized query
+    let latestPositionsMap = {};
+    if (personalInformationIds.length > 0) {
+      try {
+        // Dataverse doesn't have a direct "latest per group" in a single query.
+        // We fetch all active positions for these employees and then process to find the latest.
+        const allActivePositions = await dataverseRequest(req, "get", "ecom_employeepositions", {
+          params: {
+            $filter: `_ecom_personalinformation_value in (${personalInformationIds.map(id => `'${id}'`).join(',')}) and statecode eq 0`,
+            $select: "ecom_startdate",
+            $expand: "ecom_JobTitle($select=ecom_jobtitle)",
+            $orderby: "ecom_startdate desc" // Order by date to easily find latest
+          }
+        });
+
+        // Process to find the latest position for each employee
+        for (const pos of allActivePositions.value) {
+          const employeeId = pos._ecom_personalinformation_value;
+          if (!latestPositionsMap[employeeId]) { // First one encountered is the latest due to $orderby
+            latestPositionsMap[employeeId] = pos.ecom_JobTitle?.ecom_jobtitle || null;
+          }
+        }
+      } catch (positionErr) {
+        fastify.log.error(`Error fetching latest positions for multiple employees: ${positionErr.message}`);
+        // Continue with null job titles if there's an error
+      }
+    }
+
+    // Assign the latest job title to each profile
+    const results = profiles.map(profile => {
+      profile.ecom_jobtitle = latestPositionsMap[profile.ecom_personalinformationid] || null;
+      return profile;
+    });
+
+    return results;
 
   } catch (err) {
     console.error("❌ Error searching employee profile:", err.response ? JSON.stringify(err.response.data, null, 2) : err.message);
@@ -1985,7 +2022,7 @@ fastify.get("/profile/personal-info", {
           $select: [
           "ecom_personalinformationid", "ecom_nik", "ecom_employeename", "ecom_gender", "ecom_dateofbirth",
           "ecom_phonenumber", "statecode", "ecom_startwork",
-          "ecom_workexperience", "ecom_dateofemployment", "ecom_jobtitle",
+          "ecom_workexperience", "ecom_dateofemployment",
           "ecom_emergencycontactname", "ecom_emergencycontactaddress", "ecom_emergencycontractphonenumber",
           "ecom_relationship", "ecom_address", "ecom_ktpnumber", "ecom_npwpnumber",
           "ecom_profilepicture", "ecom_bankaccountnumber", "ecom_bpjsnumber",
@@ -1998,11 +2035,39 @@ fastify.get("/profile/personal-info", {
 
     if (!data.value || data.value.length === 0) {
       fastify.log.warn(`Profile not found for employeeId: ${employeeId}`);
-      return reply.code(404).send({ message: "Personal information record not found for your user." });
+      return reply.code(404).send({ message: "Profile not found." });
     }
 
-    // Return the single record object, not the array
-    return data.value[0];
+    const profile = data.value[0];
+
+    // Fetch the latest job title from ecom_employeepositions
+    try {
+      const latestPositionData = await dataverseRequest(req, "get", "ecom_employeepositions", {
+        params: {
+          $filter: `_ecom_personalinformation_value eq ${profile.ecom_personalinformationid} and statecode eq 0`,
+          $select: "ecom_startdate", // Only need a field to expand
+          $expand: "ecom_JobTitle($select=ecom_jobtitle)",
+          $orderby: "ecom_startdate desc",
+          $top: 1
+        }
+      });
+
+      if (latestPositionData.value && latestPositionData.value.length > 0) {
+        const latestPosition = latestPositionData.value[0];
+        if (latestPosition.ecom_JobTitle && latestPosition.ecom_JobTitle.ecom_jobtitle) {
+          profile.ecom_jobtitle = latestPosition.ecom_JobTitle.ecom_jobtitle;
+        } else {
+          profile.ecom_jobtitle = null;
+        }
+      } else {
+        profile.ecom_jobtitle = null; // No active position found
+      }
+    } catch (positionErr) {
+      fastify.log.error(`Error fetching latest position for ${profile.ecom_personalinformationid}: ${positionErr.message}`);
+      profile.ecom_jobtitle = null; // Fallback in case of error
+    }
+
+    return profile;
 
   } catch (err) {
     console.error("❌ Error fetching own profile:", err.response?.data || err.message);
