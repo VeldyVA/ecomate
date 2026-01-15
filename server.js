@@ -639,7 +639,7 @@ fastify.get("/admin/profile/search", { preValidation: [fastify.authenticate] }, 
           "ecom_relationship", "ecom_address", "ecom_ktpnumber", "ecom_npwpnumber",
           "ecom_profilepicture", "ecom_bankaccountnumber", "ecom_bpjsnumber",
           "ecom_bpjstknumber", "ecom_maritalstatus", "ecom_numberofdependent", "ecom_placeofbirth",
-          "ecom_religion", "ecom_bankname", "ecom_accountname", "ecom_personalemail", "ecom_workemail"
+          "ecom_religion", "ecom_bankname", "ecom_accountname", "ecom_personalemail", "ecom_workemail", "ecom_insurancenumber"
         ].join(",")
       }
     });
