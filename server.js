@@ -660,17 +660,19 @@ fastify.get("/admin/profile/search", { preValidation: [fastify.authenticate] }, 
         const allActivePositions = await dataverseRequest(req, "get", "ecom_employeepositions", {
           params: {
             $filter: `_ecom_personalinformation_value in (${personalInformationIds.map(id => `'${id}'`).join(',')}) and statecode eq 0`,
-            $select: "ecom_startdate",
+            $select: "ecom_startdate,_ecom_personalinformation_value", // Include _ecom_personalinformation_value for mapping
             $expand: "ecom_JobTitle($select=ecom_jobtitle)",
             $orderby: "ecom_startdate desc" // Order by date to easily find latest
           }
         });
 
-        // Process to find the latest position for each employee
-        for (const pos of allActivePositions.value) {
-          const employeeId = pos._ecom_personalinformation_value;
-          if (!latestPositionsMap[employeeId]) { // First one encountered is the latest due to $orderby
-            latestPositionsMap[employeeId] = pos.ecom_JobTitle?.ecom_jobtitle || null;
+        if (allActivePositions.value && allActivePositions.value.length > 0) {
+          // Process to find the latest position for each employee
+          for (const pos of allActivePositions.value) {
+            const employeeId = pos._ecom_personalinformation_value;
+            if (!latestPositionsMap[employeeId]) { // First one encountered is the latest due to $orderby
+              latestPositionsMap[employeeId] = pos.ecom_JobTitle?.ecom_jobtitle || null;
+            }
           }
         }
       } catch (positionErr) {
