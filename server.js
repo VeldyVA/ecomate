@@ -622,7 +622,7 @@ fastify.get("/admin/profile/search", { preValidation: [fastify.authenticate] }, 
   } else if (email) {
     filter = `ecom_workemail eq '${email}'`;
   } else if (name) {
-    filter = `ecom_employeename eq '${name}'`;
+    filter = `contains(ecom_employeename, '${name}')`;
   } else {
     return reply.code(400).send({ message: "Setidaknya satu dari 'id', 'code', 'email', atau 'name' harus diberikan." });
   }
@@ -964,7 +964,7 @@ fastify.get("/admin/leave-balance/search", { preValidation: [fastify.authenticat
     if (email) {
       personalInfoFilter = `ecom_workemail eq '${email}'`;
     } else { // name
-      personalInfoFilter = `ecom_employeename eq '${name}'`;
+      personalInfoFilter = `contains(ecom_employeename, '${name}')`;
     }
 
     try {
@@ -1781,7 +1781,7 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
       } else {
         const personalInfoFilter = email
           ? `ecom_workemail eq '${email}'`
-          : `ecom_employeename eq '${name}'`;
+          : `contains(ecom_employeename, '${name}')`;
 
         const userData = await dataverseRequest(req, "get", "ecom_personalinformations", {
           params: {
