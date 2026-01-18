@@ -2161,7 +2161,7 @@ fastify.get("/admin/position/search", { preValidation: [fastify.authenticate] },
     if (employeeId) {
       targetEmployeeId = employeeId;
     } else {
-      const personalInfoFilter = email ? `ecom_workemail eq '${email}'` : `ecom_employeename eq '${name}'`;
+      const personalInfoFilter = email ? `ecom_workemail eq '${email}'` : `contains(ecom_employeename, '${name}')`;
       const userData = await dataverseRequest(req, "get", "ecom_personalinformations", {
         params: { $filter: personalInfoFilter, $select: "ecom_personalinformationid" }
       });
@@ -2280,7 +2280,7 @@ fastify.get("/admin/developments/search", { preValidation: [fastify.authenticate
     if (email) {
       personalInfoFilter = `ecom_workemail eq '${email}'`;
     } else { // name
-      personalInfoFilter = `ecom_employeename eq '${name}'`;
+      personalInfoFilter = `contains(ecom_employeename, '${name}')`;
     }
 
     const personalInfoRes = await dataverseRequest(req, "get", "ecom_personalinformations", {
