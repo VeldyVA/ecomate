@@ -1844,7 +1844,7 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
     //  Dataverse query (DIPERKETAT)
     // ==============================
     const params = {
-      $expand: "ecom_LeaveType($select=ecom_name),ecom_Employee($select=ecom_employeename)",
+      $expand: "ecom_LeaveType($select=ecom_name),ecom_Employee($select=ecom_employeename),createdby($select=fullname)",
       $orderby: "createdon desc"
     };
 
