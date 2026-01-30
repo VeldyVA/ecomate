@@ -502,105 +502,36 @@ const gmailTransporter = nodemailer.createTransport({
 async function sendLeaveRequestEmail(fastifyInstance, leaveRequestId, recipientEmail) {
   fastifyInstance.log.info(`Attempting to send leave request email for ID: ${leaveRequestId} to ${recipientEmail}`);
   try {
-    // Fetch the full details of the newly created leave request using the admin endpoint logic
-    // We need to simulate an admin request to get all expanded details
-    const adminReq = {
-      user: { permission: "admin" }, // Simulate admin user
-      query: { employeeId: null, for: null } // No specific employee filter, get by ID later
-    };
-
-    const dataverseUrl = `ecom_employeeleaves(${leaveRequestId})`;
-    const dataverseParams = {
-      $filter: `ecom_leaverequestid eq ${leaveRequestId}`, // Filter berdasarkan ID cuti
-      $expand: "ecom_LeaveType($select=ecom_name),ecom_Employee($select=ecom_employeename),createdby($select=fullname)",
-      $select: `
-        ecom_leaverequestid,
-        ecom_name,
-        ecom_startdate,
-        ecom_enddate,
-        ecom_numberofdays,
-        ecom_leavestatus,
-        ecom_pmsmapprovalstatus,
-        ecom_hrapprovalstatus,
-        ecom_reason,
-        createdon
-      `,
-      $orderby: "createdon desc" // Ini mungkin tidak perlu untuk single record, tapi konsisten dengan admin endpoint
-    };
-    fastifyInstance.log.info({ msg: "DEBUG: Calling dataverseRequest for email notification", url: dataverseUrl, params: dataverseParams });
-
-    // Fetch the specific leave request using its ID
-    // Try a simpler request first to isolate the issue
-    const leaveRequestDetails = await dataverseRequest(adminReq, "get", dataverseUrl);
-
-    if (!leaveRequestDetails) {
-      fastifyInstance.log.error(`Failed to fetch details for leave request ID: ${leaveRequestId}`);
-      return;
-    }
-
-    // Add a small delay to allow Dataverse to fully process the new record
-    await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second delay
-
-    let expandedDetails = {};
-    try {
-        expandedDetails = await dataverseRequest(adminReq, "get", dataverseUrl, {
-            params: dataverseParams
-        });
-        fastifyInstance.log.info({ msg: "DEBUG: Successfully fetched expanded details for email notification", details: expandedDetails });
-    } catch (expandErr) {
-        fastifyInstance.log.warn({ msg: "DEBUG: Failed to fetch expanded details for email notification, proceeding with basic info", error: expandErr.message });
-        // Fallback to basic details if expanded fetch fails
-        expandedDetails = leaveRequestDetails;
-    }
-
-    const employeeName = expandedDetails.ecom_Employee?.ecom_employeename || "N/A";
-    const employeeEmail = expandedDetails.ecom_Employee?.ecom_workemail || "N/A";
-    const employeeNIK = expandedDetails.ecom_Employee?.ecom_nik || "N/A";
-    const leaveTypeName = expandedDetails.ecom_LeaveType?.ecom_name || "N/A";
-    const startDate = expandedDetails.ecom_startdate ? new Date(expandedDetails.ecom_startdate).toLocaleDateString('id-ID') : "N/A";
-    const endDate = expandedDetails.ecom_enddate ? new Date(expandedDetails.ecom_enddate).toLocaleDateString('id-ID') : "N/A";
-    const numberOfDays = expandedDetails.ecom_numberofdays || 0;
-    const reason = expandedDetails.ecom_reason || "Tidak ada alasan";
-    const status = LeaveStatus[expandedDetails.ecom_leavestatus]?.id || "Unknown";
-    const pmsmStatus = PMSMApprovalStatus[expandedDetails.ecom_pmsmapprovalstatus]?.id || "N/A";
-    const hrStatus = HRApprovalStatus[expandedDetails.ecom_hrapprovalstatus]?.id || "N/A";
-    const createdOn = expandedDetails.createdon ? new Date(expandedDetails.createdon).toLocaleString('id-ID') : "N/A";
-
-
     const mailOptions = {
-      from: process.env.GMAIL_SMTP_USER, // Menggunakan email pengirim Gmail
+      from: process.env.GMAIL_SMTP_USER,
       to: recipientEmail,
-      subject: `Pemberitahuan Cuti Baru: ${employeeName} - ${leaveTypeName}`,
+      subject: `New Leave Request Notification`,
       html: `
-        <p>Yth. Admin,</p>
-        <p>Telah diajukan permohonan cuti baru oleh karyawan:</p>
-        <ul>
-          <li><strong>Nama Karyawan:</strong> ${employeeName}</li>
-          <li><strong>Email Karyawan:</strong> ${employeeEmail}</li>
-          <li><strong>NIK:</strong> ${employeeNIK}</li>
-          <li><strong>Jenis Cuti:</strong> ${leaveTypeName}</li>
-          <li><strong>Tanggal Mulai Cuti:</strong> ${startDate}</li>
-          <li><strong>Tanggal Berakhir Cuti:</strong> ${endDate}</li>
-          <li><strong>Jumlah Hari Cuti:</strong> ${numberOfDays} hari</li>
-          <li><strong>Alasan Cuti:</strong> ${reason}</li>
-          <li><strong>Status Cuti:</strong> ${status}</li>
-          <li><strong>Status Persetujuan Atasan:</strong> ${pmsmStatus}</li>
-          <li><strong>Status Persetujuan HR:</strong> ${hrStatus}</li>
-          <li><strong>Diajukan Pada:</strong> ${createdOn}</li>
-          <li><strong>ID Permohonan Cuti:</strong> ${leaveRequestId}</li>
-        </ul>
-        <p>Mohon untuk segera ditinjau dan diproses.</p>
-        <p>Terima kasih.</p>
+        <p>Dear Admin,</p>
+        <p>A new leave request has been submitted. Please click the button below to view the details and take action:</p>
+        <p style="text-align: center;">
+          <a href="https://ecomate-dashboard.lovable.app/admin" style="
+            background-color: #007bff;
+            color: white;
+            padding: 10px 20px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            border-radius: 5px;
+            font-weight: bold;
+          ">Click Here</a>
+        </p>
+        <p>Thank you.</p>
         <br>
-        <p>Hormat kami,</p>
-        <p>Sistem Ecomate HR</p>
+        <p>Regards,</p>
+        <p>Ecomate HR System</p>
       `,
     };
 
-    await gmailTransporter.sendMail(mailOptions); // Menggunakan transporter Gmail
-    fastifyInstance.log.info(`Email notifikasi cuti baru berhasil dikirim ke ${recipientEmail} untuk ID cuti ${leaveRequestId}`);
+    await gmailTransporter.sendMail(mailOptions);
+    fastifyInstance.log.info(`Email notification for new leave request successfully sent to ${recipientEmail} for leave ID ${leaveRequestId}`);
   } catch (error) {
-    fastifyInstance.log.error({ msg: `Gagal mengirim email notifikasi cuti baru untuk ID cuti ${leaveRequestId}:`, error: error.message, stack: error.stack });
+    fastifyInstance.log.error({ msg: `Failed to send new leave request email for ID ${leaveRequestId}:`, error: error.message, stack: error.stack });
   }
 }
 
