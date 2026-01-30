@@ -536,13 +536,15 @@ async function sendLeaveRequestEmail(fastifyInstance, leaveRequestId, recipientE
       return;
     }
 
-    // Now, if the simple request succeeded, we need to fetch the expanded details separately
-    // This is a temporary workaround to debug the 400 error
+    // Add a small delay to allow Dataverse to fully process the new record
+    await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second delay
+
     let expandedDetails = {};
     try {
         expandedDetails = await dataverseRequest(adminReq, "get", dataverseUrl, {
             params: dataverseParams
         });
+        fastifyInstance.log.info({ msg: "DEBUG: Successfully fetched expanded details for email notification", details: expandedDetails });
     } catch (expandErr) {
         fastifyInstance.log.warn({ msg: "DEBUG: Failed to fetch expanded details for email notification, proceeding with basic info", error: expandErr.message });
         // Fallback to basic details if expanded fetch fails
