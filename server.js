@@ -510,7 +510,7 @@ async function sendLeaveRequestEmail(fastifyInstance, leaveRequestId, recipientE
     };
 
     // Fetch the specific leave request using its ID
-    const leaveRequestDetails = await fastifyInstance.dataverseRequest(adminReq, "get", `ecom_employeeleaves(${leaveRequestId})`, {
+    const leaveRequestDetails = await dataverseRequest(adminReq, "get", `ecom_employeeleaves(${leaveRequestId})`, {
       params: {
         $expand: "ecom_LeaveType($select=ecom_name),ecom_Employee($select=ecom_employeename,ecom_workemail,ecom_nik),createdby($select=fullname)",
         $select: `
