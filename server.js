@@ -486,8 +486,21 @@ const transporter = nodemailer.createTransport({
   auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
 });
 
+// New Gmail Transporter
+const gmailTransporter = nodemailer.createTransport({
+  service: 'gmail',
+  host: 'smtp.gmail.com', // Explicitly set Gmail SMTP host
+  port: 587,             // Explicitly set Gmail SMTP port (for STARTTLS)
+  secure: false,         // Use STARTTLS, not SSL/TLS directly on port 587
+  auth: {
+    user: process.env.GMAIL_SMTP_USER,
+    pass: process.env.GMAIL_SMTP_PASS,
+  },
+});
+
 // Helper function to send leave request email
 async function sendLeaveRequestEmail(fastifyInstance, leaveRequestId, recipientEmail) {
+  fastifyInstance.log.info(`Attempting to send leave request email for ID: ${leaveRequestId} to ${recipientEmail}`);
   try {
     // Fetch the full details of the newly created leave request using the admin endpoint logic
     // We need to simulate an admin request to get all expanded details
@@ -535,7 +548,7 @@ async function sendLeaveRequestEmail(fastifyInstance, leaveRequestId, recipientE
 
 
     const mailOptions = {
-      from: process.env.SMTP_USER,
+      from: process.env.GMAIL_SMTP_USER, // Menggunakan email pengirim Gmail
       to: recipientEmail,
       subject: `Pemberitahuan Cuti Baru: ${employeeName} - ${leaveTypeName}`,
       html: `
@@ -564,10 +577,10 @@ async function sendLeaveRequestEmail(fastifyInstance, leaveRequestId, recipientE
       `,
     };
 
-    await transporter.sendMail(mailOptions);
+    await gmailTransporter.sendMail(mailOptions); // Menggunakan transporter Gmail
     fastifyInstance.log.info(`Email notifikasi cuti baru berhasil dikirim ke ${recipientEmail} untuk ID cuti ${leaveRequestId}`);
   } catch (error) {
-    fastifyInstance.log.error(`Gagal mengirim email notifikasi cuti baru untuk ID cuti ${leaveRequestId}:`, error);
+    fastifyInstance.log.error({ msg: `Gagal mengirim email notifikasi cuti baru untuk ID cuti ${leaveRequestId}:`, error: error.message, stack: error.stack });
   }
 }
 
