@@ -509,23 +509,27 @@ async function sendLeaveRequestEmail(fastifyInstance, leaveRequestId, recipientE
       query: { employeeId: null, for: null } // No specific employee filter, get by ID later
     };
 
+    const dataverseUrl = `ecom_employeeleaves(${leaveRequestId})`;
+    const dataverseParams = {
+      $expand: "ecom_LeaveType($select=ecom_name),ecom_Employee($select=ecom_employeename,ecom_workemail,ecom_nik),createdby($select=fullname)",
+      $select: `
+        ecom_leaverequestid,
+        ecom_name,
+        ecom_startdate,
+        ecom_enddate,
+        ecom_numberofdays,
+        ecom_leavestatus,
+        ecom_pmsmapprovalstatus,
+        ecom_hrapprovalstatus,
+        ecom_reason,
+        createdon
+      `
+    };
+    fastifyInstance.log.info({ msg: "DEBUG: Calling dataverseRequest for email notification", url: dataverseUrl, params: dataverseParams });
+
     // Fetch the specific leave request using its ID
-    const leaveRequestDetails = await dataverseRequest(adminReq, "get", `ecom_employeeleaves(${leaveRequestId})`, {
-      params: {
-        $expand: "ecom_LeaveType($select=ecom_name),ecom_Employee($select=ecom_employeename,ecom_workemail,ecom_nik),createdby($select=fullname)",
-        $select: `
-          ecom_leaverequestid,
-          ecom_name,
-          ecom_startdate,
-          ecom_enddate,
-          ecom_numberofdays,
-          ecom_leavestatus,
-          ecom_pmsmapprovalstatus,
-          ecom_hrapprovalstatus,
-          ecom_reason,
-          createdon
-        `
-      }
+    const leaveRequestDetails = await dataverseRequest(adminReq, "get", dataverseUrl, {
+      params: dataverseParams
     });
 
     if (!leaveRequestDetails) {
