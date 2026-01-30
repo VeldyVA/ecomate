@@ -511,7 +511,8 @@ async function sendLeaveRequestEmail(fastifyInstance, leaveRequestId, recipientE
 
     const dataverseUrl = `ecom_employeeleaves(${leaveRequestId})`;
     const dataverseParams = {
-      $expand: "ecom_LeaveType($select=ecom_name),ecom_Employee($select=ecom_employeename,ecom_workemail,ecom_nik),createdby($select=fullname)",
+      $filter: `ecom_leaverequestid eq ${leaveRequestId}`, // Filter berdasarkan ID cuti
+      $expand: "ecom_LeaveType($select=ecom_name),ecom_Employee($select=ecom_employeename),createdby($select=fullname)",
       $select: `
         ecom_leaverequestid,
         ecom_name,
@@ -523,7 +524,8 @@ async function sendLeaveRequestEmail(fastifyInstance, leaveRequestId, recipientE
         ecom_hrapprovalstatus,
         ecom_reason,
         createdon
-      `
+      `,
+      $orderby: "createdon desc" // Ini mungkin tidak perlu untuk single record, tapi konsisten dengan admin endpoint
     };
     fastifyInstance.log.info({ msg: "DEBUG: Calling dataverseRequest for email notification", url: dataverseUrl, params: dataverseParams });
 
