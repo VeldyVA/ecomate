@@ -486,6 +486,91 @@ const transporter = nodemailer.createTransport({
   auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
 });
 
+// Helper function to send leave request email
+async function sendLeaveRequestEmail(fastifyInstance, leaveRequestId, recipientEmail) {
+  try {
+    // Fetch the full details of the newly created leave request using the admin endpoint logic
+    // We need to simulate an admin request to get all expanded details
+    const adminReq = {
+      user: { permission: "admin" }, // Simulate admin user
+      query: { employeeId: null, for: null } // No specific employee filter, get by ID later
+    };
+
+    // Fetch the specific leave request using its ID
+    const leaveRequestDetails = await fastifyInstance.dataverseRequest(adminReq, "get", `ecom_employeeleaves(${leaveRequestId})`, {
+      params: {
+        $expand: "ecom_LeaveType($select=ecom_name),ecom_Employee($select=ecom_employeename,ecom_workemail,ecom_nik),createdby($select=fullname)",
+        $select: `
+          ecom_leaverequestid,
+          ecom_name,
+          ecom_startdate,
+          ecom_enddate,
+          ecom_numberofdays,
+          ecom_leavestatus,
+          ecom_pmsmapprovalstatus,
+          ecom_hrapprovalstatus,
+          ecom_reason,
+          createdon
+        `
+      }
+    });
+
+    if (!leaveRequestDetails) {
+      fastifyInstance.log.error(`Failed to fetch details for leave request ID: ${leaveRequestId}`);
+      return;
+    }
+
+    const employeeName = leaveRequestDetails.ecom_Employee?.ecom_employeename || "N/A";
+    const employeeEmail = leaveRequestDetails.ecom_Employee?.ecom_workemail || "N/A";
+    const employeeNIK = leaveRequestDetails.ecom_Employee?.ecom_nik || "N/A";
+    const leaveTypeName = leaveRequestDetails.ecom_LeaveType?.ecom_name || "N/A";
+    const startDate = leaveRequestDetails.ecom_startdate ? new Date(leaveRequestDetails.ecom_startdate).toLocaleDateString('id-ID') : "N/A";
+    const endDate = leaveRequestDetails.ecom_enddate ? new Date(leaveRequestDetails.ecom_enddate).toLocaleDateString('id-ID') : "N/A";
+    const numberOfDays = leaveRequestDetails.ecom_numberofdays || 0;
+    const reason = leaveRequestDetails.ecom_reason || "Tidak ada alasan";
+    const status = LeaveStatus[leaveRequestDetails.ecom_leavestatus]?.id || "Unknown";
+    const pmsmStatus = PMSMApprovalStatus[leaveRequestDetails.ecom_pmsmapprovalstatus]?.id || "N/A";
+    const hrStatus = HRApprovalStatus[leaveRequestDetails.ecom_hrapprovalstatus]?.id || "N/A";
+    const createdOn = leaveRequestDetails.createdon ? new Date(leaveRequestDetails.createdon).toLocaleString('id-ID') : "N/A";
+
+
+    const mailOptions = {
+      from: process.env.SMTP_USER,
+      to: recipientEmail,
+      subject: `Pemberitahuan Cuti Baru: ${employeeName} - ${leaveTypeName}`,
+      html: `
+        <p>Yth. Admin,</p>
+        <p>Telah diajukan permohonan cuti baru oleh karyawan:</p>
+        <ul>
+          <li><strong>Nama Karyawan:</strong> ${employeeName}</li>
+          <li><strong>Email Karyawan:</strong> ${employeeEmail}</li>
+          <li><strong>NIK:</strong> ${employeeNIK}</li>
+          <li><strong>Jenis Cuti:</strong> ${leaveTypeName}</li>
+          <li><strong>Tanggal Mulai Cuti:</strong> ${startDate}</li>
+          <li><strong>Tanggal Berakhir Cuti:</strong> ${endDate}</li>
+          <li><strong>Jumlah Hari Cuti:</strong> ${numberOfDays} hari</li>
+          <li><strong>Alasan Cuti:</strong> ${reason}</li>
+          <li><strong>Status Cuti:</strong> ${status}</li>
+          <li><strong>Status Persetujuan Atasan:</strong> ${pmsmStatus}</li>
+          <li><strong>Status Persetujuan HR:</strong> ${hrStatus}</li>
+          <li><strong>Diajukan Pada:</strong> ${createdOn}</li>
+          <li><strong>ID Permohonan Cuti:</strong> ${leaveRequestId}</li>
+        </ul>
+        <p>Mohon untuk segera ditinjau dan diproses.</p>
+        <p>Terima kasih.</p>
+        <br>
+        <p>Hormat kami,</p>
+        <p>Sistem Ecomate HR</p>
+      `,
+    };
+
+    await transporter.sendMail(mailOptions);
+    fastifyInstance.log.info(`Email notifikasi cuti baru berhasil dikirim ke ${recipientEmail} untuk ID cuti ${leaveRequestId}`);
+  } catch (error) {
+    fastifyInstance.log.error(`Gagal mengirim email notifikasi cuti baru untuk ID cuti ${leaveRequestId}:`, error);
+  }
+}
+
 // ==============================
 // 🔹 Role Guard
 // ==============================
@@ -1294,6 +1379,9 @@ if (!userRes.value?.length) {
   const systemUserId = userRes.value[0].systemuserid;
   const leaveId = inserted.ecom_employeeleaveid; // ID dari record cuti baru
 
+  // === SEND EMAIL NOTIFICATION ===
+  await sendLeaveRequestEmail(fastify, leaveId, "veldy.verdiyansyah@ecomindo.com");
+
   // === 8.5. Hubungkan leave request ke leave balance ===
 try {
   const leaveYear = start.getUTCFullYear().toString();
@@ -1592,6 +1680,9 @@ fastify.post("/leave/requests/special", { preValidation: [fastify.authenticate] 
     } else {
         const systemUserId = userRes.value[0].systemuserid;
         const leaveId = inserted.ecom_employeeleaveid;
+
+        // === SEND EMAIL NOTIFICATION ===
+        await sendLeaveRequestEmail(fastify, leaveId, "veldy.verdiyansyah@ecomindo.com");
 
         try {
             const leaveYear = start.getUTCFullYear().toString();
