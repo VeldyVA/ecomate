@@ -1412,9 +1412,6 @@ if (!userRes.value?.length) {
   const systemUserId = userRes.value[0].systemuserid;
   const leaveId = inserted.ecom_employeeleaveid; // ID dari record cuti baru
 
-  // === SEND EMAIL NOTIFICATION ===
-  await sendLeaveRequestEmail(fastify, leaveId, "veldy.verdiyansyah@ecomindo.com");
-
   // === 8.5. Hubungkan leave request ke leave balance ===
 try {
   const leaveYear = start.getUTCFullYear().toString();
@@ -1495,6 +1492,8 @@ try {
       });
 
       fastify.log.info(`✅ Flow triggered successfully for ${employeeEmail}`);
+      // === SEND EMAIL NOTIFICATION AFTER FLOW ===
+      await sendLeaveRequestEmail(fastify, leaveId, "veldy.verdiyansyah@ecomindo.com");
     }
   } catch (flowErr) {
     fastify.log.error({
@@ -1763,6 +1762,8 @@ fastify.post("/leave/requests/special", { preValidation: [fastify.authenticate] 
                     body: JSON.stringify({ leaveId: leaveId, userId: systemUserId })
                 });
                 fastify.log.info(`✅ Flow triggered successfully for ${employeeEmail}`);
+                // === SEND EMAIL NOTIFICATION AFTER FLOW ===
+                await sendLeaveRequestEmail(fastify, leaveId, "veldy.verdiyansyah@ecomindo.com");
             }
         } catch (flowErr) {
             fastify.log.error({ msg: "❌ Failed to trigger Power Automate Flow", error: flowErr.message });
