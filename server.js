@@ -528,27 +528,39 @@ async function sendLeaveRequestEmail(fastifyInstance, leaveRequestId, recipientE
     fastifyInstance.log.info({ msg: "DEBUG: Calling dataverseRequest for email notification", url: dataverseUrl, params: dataverseParams });
 
     // Fetch the specific leave request using its ID
-    const leaveRequestDetails = await dataverseRequest(adminReq, "get", dataverseUrl, {
-      params: dataverseParams
-    });
+    // Try a simpler request first to isolate the issue
+    const leaveRequestDetails = await dataverseRequest(adminReq, "get", dataverseUrl);
 
     if (!leaveRequestDetails) {
       fastifyInstance.log.error(`Failed to fetch details for leave request ID: ${leaveRequestId}`);
       return;
     }
 
-    const employeeName = leaveRequestDetails.ecom_Employee?.ecom_employeename || "N/A";
-    const employeeEmail = leaveRequestDetails.ecom_Employee?.ecom_workemail || "N/A";
-    const employeeNIK = leaveRequestDetails.ecom_Employee?.ecom_nik || "N/A";
-    const leaveTypeName = leaveRequestDetails.ecom_LeaveType?.ecom_name || "N/A";
-    const startDate = leaveRequestDetails.ecom_startdate ? new Date(leaveRequestDetails.ecom_startdate).toLocaleDateString('id-ID') : "N/A";
-    const endDate = leaveRequestDetails.ecom_enddate ? new Date(leaveRequestDetails.ecom_enddate).toLocaleDateString('id-ID') : "N/A";
-    const numberOfDays = leaveRequestDetails.ecom_numberofdays || 0;
-    const reason = leaveRequestDetails.ecom_reason || "Tidak ada alasan";
-    const status = LeaveStatus[leaveRequestDetails.ecom_leavestatus]?.id || "Unknown";
-    const pmsmStatus = PMSMApprovalStatus[leaveRequestDetails.ecom_pmsmapprovalstatus]?.id || "N/A";
-    const hrStatus = HRApprovalStatus[leaveRequestDetails.ecom_hrapprovalstatus]?.id || "N/A";
-    const createdOn = leaveRequestDetails.createdon ? new Date(leaveRequestDetails.createdon).toLocaleString('id-ID') : "N/A";
+    // Now, if the simple request succeeded, we need to fetch the expanded details separately
+    // This is a temporary workaround to debug the 400 error
+    let expandedDetails = {};
+    try {
+        expandedDetails = await dataverseRequest(adminReq, "get", dataverseUrl, {
+            params: dataverseParams
+        });
+    } catch (expandErr) {
+        fastifyInstance.log.warn({ msg: "DEBUG: Failed to fetch expanded details for email notification, proceeding with basic info", error: expandErr.message });
+        // Fallback to basic details if expanded fetch fails
+        expandedDetails = leaveRequestDetails;
+    }
+
+    const employeeName = expandedDetails.ecom_Employee?.ecom_employeename || "N/A";
+    const employeeEmail = expandedDetails.ecom_Employee?.ecom_workemail || "N/A";
+    const employeeNIK = expandedDetails.ecom_Employee?.ecom_nik || "N/A";
+    const leaveTypeName = expandedDetails.ecom_LeaveType?.ecom_name || "N/A";
+    const startDate = expandedDetails.ecom_startdate ? new Date(expandedDetails.ecom_startdate).toLocaleDateString('id-ID') : "N/A";
+    const endDate = expandedDetails.ecom_enddate ? new Date(expandedDetails.ecom_enddate).toLocaleDateString('id-ID') : "N/A";
+    const numberOfDays = expandedDetails.ecom_numberofdays || 0;
+    const reason = expandedDetails.ecom_reason || "Tidak ada alasan";
+    const status = LeaveStatus[expandedDetails.ecom_leavestatus]?.id || "Unknown";
+    const pmsmStatus = PMSMApprovalStatus[expandedDetails.ecom_pmsmapprovalstatus]?.id || "N/A";
+    const hrStatus = HRApprovalStatus[expandedDetails.ecom_hrapprovalstatus]?.id || "N/A";
+    const createdOn = expandedDetails.createdon ? new Date(expandedDetails.createdon).toLocaleString('id-ID') : "N/A";
 
 
     const mailOptions = {
