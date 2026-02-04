@@ -1916,7 +1916,7 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
       params.$select = aiSelectFields;
       // Re-add expand for AI, but keep it minimal
       params.$expand = "ecom_LeaveType($select=ecom_name),ecom_Employee($select=ecom_employeename)";
-      params.$top = 10; // HARD LIMIT
+      params.$top = 20; // HARD LIMIT
     } else {
       // Existing logic for non-AI
       params.$expand = "ecom_LeaveType($select=ecom_name),ecom_Employee($select=ecom_employeename),createdby($select=fullname)";
