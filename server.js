@@ -1907,7 +1907,8 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
     if (forWho === "ai") {
       // Include the primary key for AI consumers so they can identify requests to cancel
       params.$select = "ecom_leaverequestid,ecom_startdate,ecom_enddate,ecom_leavestatus";
-      // No expand for AI to minimize token usage
+      // Re-add expand for AI, but keep it minimal
+      params.$expand = "ecom_LeaveType($select=ecom_name),ecom_Employee($select=ecom_employeename)";
       params.$top = 10; // HARD LIMIT
     } else {
       // Existing logic for non-AI
