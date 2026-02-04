@@ -1896,6 +1896,9 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
     if (finalStartDate) filters.push(`ecom_enddate ge ${finalStartDate}`);
     if (finalEndDate) filters.push(`ecom_startdate le ${finalEndDate}`);
 
+    // Determine if a specific employee is being filtered
+    const isSpecificEmployeeFilterPresent = employeeId || (email && email.trim()) || (name && name.trim());
+
     // ==============================
     //  Dataverse query (DIPERKETAT)
     // ==============================
@@ -1905,8 +1908,12 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
 
     //  SELECT DAN EXPAND BERBEDA UNTUK AI
     if (forWho === "ai") {
-      // Include the primary key for AI consumers so they can identify requests to cancel
-      params.$select = "ecom_leaverequestid,ecom_startdate,ecom_enddate,ecom_leavestatus";
+      let aiSelectFields = "ecom_startdate,ecom_enddate,ecom_leavestatus";
+      if (isSpecificEmployeeFilterPresent) {
+        // If filtering for a specific employee, include the ID for potential cancellation
+        aiSelectFields = "ecom_leaverequestid," + aiSelectFields;
+      }
+      params.$select = aiSelectFields;
       // Re-add expand for AI, but keep it minimal
       params.$expand = "ecom_LeaveType($select=ecom_name),ecom_Employee($select=ecom_employeename)";
       params.$top = 10; // HARD LIMIT
