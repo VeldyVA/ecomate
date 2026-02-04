@@ -1909,7 +1909,7 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
       params.$select = "ecom_leaverequestid,ecom_startdate,ecom_enddate,ecom_leavestatus";
       // AI needs employee name and leave type, so we keep the expand but limit it.
       params.$expand = "ecom_LeaveType($select=ecom_name),ecom_Employee($select=ecom_employeename)";
-      params.$top = 50; // HARD LIMIT
+      params.$top = 10; // HARD LIMIT
     } else {
       // Existing logic for non-AI
       params.$expand = "ecom_LeaveType($select=ecom_name),ecom_Employee($select=ecom_employeename),createdby($select=fullname)";
