@@ -1906,7 +1906,7 @@ fastify.get("/admin/leave-requests", { preValidation: [fastify.authenticate] }, 
     //  SELECT DAN EXPAND BERBEDA UNTUK AI
     if (forWho === "ai") {
       // Include the primary key for AI consumers so they can identify requests to cancel
-      params.$select = "ecom_leaverequestid,ecom_startdate,ecom_enddate,ecom_leavestatus,createdon";
+      params.$select = "ecom_leaverequestid,ecom_startdate,ecom_enddate,ecom_leavestatus";
       // AI needs employee name and leave type, so we keep the expand but limit it.
       params.$expand = "ecom_LeaveType($select=ecom_name),ecom_Employee($select=ecom_employeename)";
       params.$top = 50; // HARD LIMIT
