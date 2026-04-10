@@ -273,7 +273,14 @@ fastify.get("/auth/callback", async (req, reply) => {
       await kv.set(otp, longLivedJwt, { ex: 300 });
       fastify.log.info(`OTP ${otp} and JWT stored in Vercel KV.`);
     } catch (kvErr) {
-      fastify.log.error("❌ Error saving OTP to Vercel KV:", kvErr);
+      fastify.log.error({
+        msg: "❌ Error saving OTP to Vercel KV",
+        error: kvErr.message,
+        stack: kvErr.stack,
+        kvUrl: process.env.KV_REST_API1_KV_REST_API_URL || process.env.KV_URL ? "SET" : "NOT_SET",
+        kvAuthToken: process.env.KV_REST_API1_KV_REST_API_TOKEN || process.env.KV_AUTH_TOKEN ? "SET" : "NOT_SET",
+        kvRedisUrl: process.env.KV_REST_API1_KV_URL || process.env.KV_URL ? "SET" : "NOT_SET"
+      });
       return reply.status(500).send({ error: "Failed to store authentication session." });
     }
 
