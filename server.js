@@ -9,9 +9,30 @@ import fs from "fs";
 import path from "path";
 import { ConfidentialClientApplication } from "@azure/msal-node";
 import fastifyCors from "@fastify/cors";
-import { kv } from "@vercel/kv";
+import { Redis } from "@upstash/redis";
 
 dotenv.config();
+
+// Initialize Redis client with explicit credentials
+// Support both KV_REST_API1_* (Upstash format with number) and standard Vercel KV format
+const kvUrl = process.env.KV_REST_API_URL || 
+              process.env.KV_REST_API1_KV_REST_API_URL || 
+              process.env.KV_URL;
+
+const kvToken = process.env.KV_REST_API_TOKEN || 
+                process.env.KV_REST_API1_KV_REST_API_TOKEN || 
+                process.env.KV_AUTH_TOKEN;
+
+if (!kvUrl || !kvToken) {
+  console.error("❌ FATAL: Redis credentials not found in environment variables");
+  console.error("Expected KV_REST_API_URL and KV_REST_API_TOKEN (or KV_REST_API1_* variants)");
+  process.exit(1);
+}
+
+const kv = new Redis({
+  url: kvUrl,
+  token: kvToken,
+});
 
 const fastify = Fastify({ logger: true });
 
@@ -277,9 +298,10 @@ fastify.get("/auth/callback", async (req, reply) => {
         msg: "❌ Error saving OTP to Vercel KV",
         error: kvErr.message,
         stack: kvErr.stack,
-        kvUrl: process.env.KV_REST_API1_KV_REST_API_URL || process.env.KV_URL ? "SET" : "NOT_SET",
-        kvAuthToken: process.env.KV_REST_API1_KV_REST_API_TOKEN || process.env.KV_AUTH_TOKEN ? "SET" : "NOT_SET",
-        kvRedisUrl: process.env.KV_REST_API1_KV_URL || process.env.KV_URL ? "SET" : "NOT_SET"
+        kvUrlStartsWith: kvUrl?.substring(0, 20),
+        kvUrlLength: kvUrl?.length || 0,
+        kvTokenStartsWith: kvToken?.substring(0, 20),
+        kvTokenLength: kvToken?.length || 0
       });
       return reply.status(500).send({ error: "Failed to store authentication session." });
     }
