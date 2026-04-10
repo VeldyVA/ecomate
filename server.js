@@ -13,19 +13,19 @@ import { Redis } from "@upstash/redis";
 
 dotenv.config();
 
-// Initialize Redis client with explicit credentials
-// Support both KV_REST_API1_* (Upstash format with number) and standard Vercel KV format
-const kvUrl = process.env.KV_REST_API_URL || 
-              process.env.KV_REST_API1_KV_REST_API_URL || 
-              process.env.KV_URL;
-
-const kvToken = process.env.KV_REST_API_TOKEN || 
-                process.env.KV_REST_API1_KV_REST_API_TOKEN || 
-                process.env.KV_AUTH_TOKEN;
+// Initialize Redis client with Upstash credentials
+// Only use UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN to avoid conflicts with old KV variables
+const kvUrl = process.env.UPSTASH_REDIS_REST_URL;
+const kvToken = process.env.UPSTASH_REDIS_REST_TOKEN;
 
 if (!kvUrl || !kvToken) {
-  console.error("❌ FATAL: Redis credentials not found in environment variables");
-  console.error("Expected KV_REST_API_URL and KV_REST_API_TOKEN (or KV_REST_API1_* variants)");
+  console.error("❌ FATAL: Redis credentials not found!");
+  console.error("Required environment variables:");
+  console.error("  - UPSTASH_REDIS_REST_URL");
+  console.error("  - UPSTASH_REDIS_REST_TOKEN");
+  console.error("\nSet these in Vercel Environment Variables:");
+  console.error("  UPSTASH_REDIS_REST_URL=https://hip-lacewing-95640.upstash.io");
+  console.error("  UPSTASH_REDIS_REST_TOKEN=gQAAAAAAAXWYAAIncDJkMzVmYzc0MjkxMzg0NDkyYmQ0MjJmY2NmMmUyMjM2YnAyOTU2NDA");
   process.exit(1);
 }
 
