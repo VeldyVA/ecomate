@@ -865,8 +865,8 @@ function parseIntent(messageText) {
 
 async function sendInstagramMessage(recipientId, messageText, accessToken) {
   try {
-    // Use Graph API domain (graph.facebook.com) for Messenger/Instagram messaging
     fastify.log.info({ msg: 'Sending Instagram message via Graph API', recipientId, messageText: messageText.substring(0, 50) + '...', businessAccountId: process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID, accessTokenStart: accessToken?.substring(0, 5) });
+    fastify.log.info({ msg: 'DEBUG: About to make axios.post call to Instagram Graph API' });
     const res = await axios.post(
       `https://graph.facebook.com/v19.0/${process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID}/messages`,
       { recipient: { id: recipientId }, message: { text: messageText } },
@@ -875,10 +875,11 @@ async function sendInstagramMessage(recipientId, messageText, accessToken) {
         timeout: 5000 // Add a 5-second timeout
       }
     );
+    fastify.log.info({ msg: 'DEBUG: axios.post call completed successfully' });
     fastify.log.info({ msg: 'Instagram message sent successfully', recipientId, responseData: res.data });
     return res.data;
   } catch (err) {
-    fastify.log.error({ msg: 'Failed to send Instagram message', recipientId, error: err.response?.data || err.message });
+    fastify.log.error({ msg: 'Failed to send Instagram message', recipientId, error: err.message, stack: err.stack, errorCode: err.code, responseData: err.response?.data });
     throw err;
   }
 }
