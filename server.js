@@ -870,7 +870,10 @@ async function sendInstagramMessage(recipientId, messageText, accessToken) {
     const res = await axios.post(
       `https://graph.facebook.com/v19.0/${process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID}/messages`,
       { recipient: { id: recipientId }, message: { text: messageText } },
-      { headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' } }
+      {
+        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        timeout: 5000 // Add a 5-second timeout
+      }
     );
     fastify.log.info({ msg: 'Instagram message sent successfully', recipientId, responseData: res.data });
     return res.data;
