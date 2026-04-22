@@ -937,21 +937,39 @@ fastify.post('/instagram/webhook', async (req, reply) => {
     if (!signature || !appSecret) return reply.code(400).send({ error: 'Missing signature or secret' });
     // Use the raw body (preserved by our content-type parser) for HMAC verification
     const payload = req.rawBody || JSON.stringify(req.body || {});
-    if (!verifyInstagramSignature(payload, signature, appSecret)) return reply.code(401).send({ error: 'Signature verification failed' });
+    if (!verifyInstagramSignature(payload, signature, appSecret)) {
+      fastify.log.error({ msg: 'Instagram signature verification failed' });
+      return reply.code(401).send({ error: 'Signature verification failed' });
+    }
+    fastify.log.info({ msg: 'Instagram signature verified successfully' });
 
     const { entry } = req.body;
-    if (!entry || !Array.isArray(entry)) return reply.code(400).send({ error: 'Invalid payload' });
+    if (!entry || !Array.isArray(entry)) {
+      fastify.log.error({ msg: 'Invalid Instagram payload: no entry or not array', entry: entry });
+      return reply.code(400).send({ error: 'Invalid payload' });
+    }
+    fastify.log.info({ msg: 'Instagram payload parsed', entryCount: entry.length });
 
     for (const evt of entry) {
       if (evt.messaging && Array.isArray(evt.messaging)) {
+        fastify.log.info({ msg: 'Processing messaging events', eventCount: evt.messaging.length });
         for (const msg of evt.messaging) {
-          if (!msg.message) continue;
+          if (!msg.message) {
+            fastify.log.info({ msg: 'Skipping non-message event' });
+            continue;
+          }
           const senderId = msg.sender?.id;
           const messageText = msg.message?.text;
-          if (!senderId || !messageText) continue;
+          if (!senderId || !messageText) {
+            fastify.log.info({ msg: 'Skipping message without senderId or text', senderId: !!senderId, messageText: !!messageText });
+            continue;
+          }
+          fastify.log.info({ msg: 'Calling handleInstagramMessage', senderId, messageText });
           // process asynchronously
           handleInstagramMessage(senderId, messageText).catch(err => fastify.log.error({ msg: 'handleInstagramMessage failed', err: err.message }));
         }
+      } else {
+        fastify.log.info({ msg: 'Skipping non-messaging event' });
       }
     }
     return reply.code(200).send({ status: 'received' });
