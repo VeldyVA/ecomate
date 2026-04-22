@@ -981,93 +981,19 @@ fastify.post('/instagram/webhook', async (req, reply) => {
 
 async function handleInstagramMessage(senderId, messageText) {
   try {
-    fastify.log.info({ msg: 'handleInstagramMessage started', senderId, messageText });
-    let userEmail = await getPSIDEmailMapping(senderId);
-    fastify.log.info({ msg: 'handleInstagramMessage: PSID-Email mapping result', senderId, userEmail: userEmail || 'not found' });
-    const { intent, params } = parseIntent(messageText);
-    fastify.log.info({ msg: 'handleInstagramMessage: intent parsed', intent, params, senderId, mapped: !!userEmail });
-
-    // If sensitive actions require mapping/email, prompt user
-    if ((intent === 'check_leave_balance' || intent === 'get_profile' || intent === 'get_leave_requests') && !userEmail) {
-      fastify.log.info({ msg: 'Attempting to send email request message', senderId, message: 'ℹ️ Untuk akses data, sebutkan email karyawan Anda (contoh: nama@ecomindo.com)', accessTokenStart: process.env.INSTAGRAM_ACCESS_TOKEN?.substring(0, 5) });
-      await sendInstagramMessage(senderId, 'ℹ️ Untuk akses data, sebutkan email karyawan Anda (contoh: nama@ecomindo.com)', process.env.INSTAGRAM_ACCESS_TOKEN);
-      fastify.log.info({ msg: 'Email request message sent successfully (or attempted)', senderId });
-      return;
-    }
-
-    // If user sends an email to map
-    if (intent === 'unknown' && messageText.includes('@') && messageText.includes('.')) {
-      const potentialEmail = messageText.trim();
-      try {
-        const minReq = { headers: {}, session: { accessToken: await getAppLevelDataverseToken() } };
-        const res = await dataverseRequest(minReq, 'get', 'ecom_personalinformations', { params: { $filter: `ecom_workemail eq '${potentialEmail}'`, $select: 'ecom_personalinformationid,ecom_employeename' } });
-        if (res.value && res.value.length) {
-          await setPSIDEmailMapping(senderId, potentialEmail);
-          await sendInstagramMessage(senderId, `✅ Email terverifikasi: ${potentialEmail}\\n\\nSekarang coba: cek cuti, data, riwayat`, process.env.INSTAGRAM_ACCESS_TOKEN);
-          return;
-        }
-      } catch (e) { fastify.log.error({ msg: 'validate email failed', e: e.message }); }
-      await sendInstagramMessage(senderId, '❌ Email tidak ditemukan di sistem. Pastikan email kerja Anda.', process.env.INSTAGRAM_ACCESS_TOKEN);
-      return;
-    }
-
-    let responseData = {};
-    switch (intent) {
-      case 'login':
-        responseData = { action: 'login' };
-        break;
-      case 'check_leave_balance':
-        if (userEmail) {
-          try {
-            const minReq = { headers: {}, session: { accessToken: await getAppLevelDataverseToken() }, user: { email: userEmail } };
-            const personal = await dataverseRequest(minReq, 'get', 'ecom_personalinformations', { params: { $filter: `ecom_workemail eq '${userEmail}'`, $select: 'ecom_personalinformationid' } });
-            if (!personal.value?.length) { responseData = { error: 'Personal info not found' }; break; }
-            const employeeId = personal.value[0].ecom_personalinformationid;
-            const period = params.period || new Date().getFullYear().toString();
-            const balancesRes = await dataverseRequest(minReq, 'get', 'ecom_leaveusages', { params: { $filter: `_ecom_employee_value eq ${employeeId} and ecom_period eq '${period}'`, $select: 'ecom_balance,_ecom_leavetype_value,ecom_name' } });
-            const balances = (balancesRes.value || []).map(b => ({ leave_type_name: b.ecom_name, balance: b.ecom_balance }));
-            responseData = { balances };
-          } catch (e) { fastify.log.error({ msg: 'fetch balance failed', e: e.message }); responseData = { error: 'Failed to fetch balance' }; }
-        }
-        break;
-      case 'get_profile':
-        if (userEmail) {
-          try {
-            const minReq = { headers: {}, session: { accessToken: await getAppLevelDataverseToken() }, user: { email: userEmail } };
-            const personalInfoRes = await dataverseRequest(minReq, 'get', 'ecom_personalinformations', { params: { $filter: `ecom_workemail eq '${userEmail}'`, $select: 'ecom_employeename' } });
-            if (personalInfoRes.value?.length) responseData = { employeeName: personalInfoRes.value[0].ecom_employeename, email: userEmail }; else responseData = { error: 'Profile not found' };
-          } catch (e) { fastify.log.error({ msg: 'fetch profile failed', e: e.message }); responseData = { error: 'Failed to fetch profile' }; }
-        }
-        break;
-      case 'get_leave_requests':
-        if (userEmail) {
-          try {
-            const minReq = { headers: {}, session: { accessToken: await getAppLevelDataverseToken() }, user: { email: userEmail } };
-            const personal = await dataverseRequest(minReq, 'get', 'ecom_personalinformations', { params: { $filter: `ecom_workemail eq '${userEmail}'`, $select: 'ecom_personalinformationid' } });
-            if (personal.value?.length) {
-              const employeeId = personal.value[0].ecom_personalinformationid;
-              const requestsRes = await dataverseRequest(minReq, 'get', 'ecom_employeeleaves', { params: { $filter: `_ecom_employee_value eq ${employeeId}`, $select: 'ecom_name,ecom_startdate,ecom_enddate,ecom_leavestatus', $orderby: 'createdon desc', $top: 10 } });
-              const requests = (requestsRes.value || []).map(r => ({ leave_type: r.ecom_name, start_date: r.ecom_startdate, end_date: r.ecom_enddate, status: r.ecom_leavestatus }));
-              responseData = { requests };
-            }
-          } catch (e) { fastify.log.error({ msg: 'fetch requests failed', e: e.message }); responseData = { error: 'Failed to fetch requests' }; }
-        }
-        break;
-      default:
-        responseData = { action: 'unknown' };
-    }
-
-    const text = formatInstagramResponse(responseData, intent);
-    fastify.log.info({ msg: 'handleInstagramMessage: Preparing to send final response', senderId, text: text.substring(0, 50) + '...' });
-    await sendInstagramMessage(senderId, text, process.env.INSTAGRAM_ACCESS_TOKEN);
-    fastify.log.info({ msg: 'instagram reply sent', senderId, intent });
+    fastify.log.info({ msg: 'handleInstagramMessage started (simplified)', senderId, messageText });
+    // Temporarily bypass complex logic to test basic message sending
+    const responseText = `Echo: ${messageText}`;
+    fastify.log.info({ msg: 'handleInstagramMessage: Preparing to send simplified response', senderId, responseText });
+    await sendInstagramMessage(senderId, responseText, process.env.INSTAGRAM_ACCESS_TOKEN);
+    fastify.log.info({ msg: 'handleInstagramMessage: Simplified response sent', senderId });
 
   } catch (e) {
-    fastify.log.error({ msg: 'handleInstagramMessage unexpected', e: e.message });
+    fastify.log.error({ msg: 'handleInstagramMessage unexpected (simplified)', e: e.message, stack: e.stack });
     try {
-      fastify.log.error({ msg: 'handleInstagramMessage: Preparing to send error response', senderId, error: e.message });
+      fastify.log.error({ msg: 'handleInstagramMessage: Preparing to send error response (simplified)', senderId, error: e.message });
       await sendInstagramMessage(senderId, '❌ Terjadi kesalahan. Silakan coba lagi nanti.', process.env.INSTAGRAM_ACCESS_TOKEN);
-    } catch (er) { fastify.log.error({ msg: 'failed to send error message', er: er.message }); }
+    } catch (er) { fastify.log.error({ msg: 'failed to send error message (simplified)', er: er.message }); }
   }
 }
 
