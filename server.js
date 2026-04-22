@@ -866,11 +866,13 @@ function parseIntent(messageText) {
 async function sendInstagramMessage(recipientId, messageText, accessToken) {
   try {
     // Use Graph API domain (graph.facebook.com) for Messenger/Instagram messaging
+    fastify.log.info({ msg: 'Sending Instagram message via Graph API', recipientId, messageText: messageText.substring(0, 50) + '...', businessAccountId: process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID, accessTokenStart: accessToken?.substring(0, 5) });
     const res = await axios.post(
       `https://graph.facebook.com/v19.0/${process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID}/messages`,
       { recipient: { id: recipientId }, message: { text: messageText } },
       { headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' } }
     );
+    fastify.log.info({ msg: 'Instagram message sent successfully', recipientId, responseData: res.data });
     return res.data;
   } catch (err) {
     fastify.log.error({ msg: 'Failed to send Instagram message', recipientId, error: err.response?.data || err.message });
@@ -967,7 +969,9 @@ async function handleInstagramMessage(senderId, messageText) {
 
     // If sensitive actions require mapping/email, prompt user
     if ((intent === 'check_leave_balance' || intent === 'get_profile' || intent === 'get_leave_requests') && !userEmail) {
+      fastify.log.info({ msg: 'Attempting to send email request message', senderId, message: 'ℹ️ Untuk akses data, sebutkan email karyawan Anda (contoh: nama@ecomindo.com)', accessTokenStart: process.env.INSTAGRAM_ACCESS_TOKEN?.substring(0, 5) });
       await sendInstagramMessage(senderId, 'ℹ️ Untuk akses data, sebutkan email karyawan Anda (contoh: nama@ecomindo.com)', process.env.INSTAGRAM_ACCESS_TOKEN);
+      fastify.log.info({ msg: 'Email request message sent successfully (or attempted)', senderId });
       return;
     }
 
