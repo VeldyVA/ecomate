@@ -981,9 +981,11 @@ fastify.post('/instagram/webhook', async (req, reply) => {
 
 async function handleInstagramMessage(senderId, messageText) {
   try {
+    fastify.log.info({ msg: 'handleInstagramMessage started', senderId, messageText });
     let userEmail = await getPSIDEmailMapping(senderId);
+    fastify.log.info({ msg: 'handleInstagramMessage: PSID-Email mapping result', senderId, userEmail: userEmail || 'not found' });
     const { intent, params } = parseIntent(messageText);
-    fastify.log.info({ msg: 'intent parsed', intent, senderId, mapped: !!userEmail });
+    fastify.log.info({ msg: 'handleInstagramMessage: intent parsed', intent, params, senderId, mapped: !!userEmail });
 
     // If sensitive actions require mapping/email, prompt user
     if ((intent === 'check_leave_balance' || intent === 'get_profile' || intent === 'get_leave_requests') && !userEmail) {
@@ -1056,12 +1058,16 @@ async function handleInstagramMessage(senderId, messageText) {
     }
 
     const text = formatInstagramResponse(responseData, intent);
+    fastify.log.info({ msg: 'handleInstagramMessage: Preparing to send final response', senderId, text: text.substring(0, 50) + '...' });
     await sendInstagramMessage(senderId, text, process.env.INSTAGRAM_ACCESS_TOKEN);
     fastify.log.info({ msg: 'instagram reply sent', senderId, intent });
 
   } catch (e) {
     fastify.log.error({ msg: 'handleInstagramMessage unexpected', e: e.message });
-    try { await sendInstagramMessage(senderId, '❌ Terjadi kesalahan. Silakan coba lagi nanti.', process.env.INSTAGRAM_ACCESS_TOKEN); } catch (er) { fastify.log.error({ msg: 'failed to send error message', er: er.message }); }
+    try {
+      fastify.log.error({ msg: 'handleInstagramMessage: Preparing to send error response', senderId, error: e.message });
+      await sendInstagramMessage(senderId, '❌ Terjadi kesalahan. Silakan coba lagi nanti.', process.env.INSTAGRAM_ACCESS_TOKEN);
+    } catch (er) { fastify.log.error({ msg: 'failed to send error message', er: er.message }); }
   }
 }
 
