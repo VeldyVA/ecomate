@@ -11,6 +11,8 @@ import { ConfidentialClientApplication } from "@azure/msal-node";
 import fastifyCors from "@fastify/cors";
 import { Redis } from "@upstash/redis";
 
+import crypto from "crypto";
+
 dotenv.config();
 
 // Initialize Redis client with Upstash credentials
@@ -830,6 +832,214 @@ fastify.patch("/profile/:employeeId", { preValidation: [fastify.authenticate] },
     });
   }
 });
+
+// ==============================
+// 🔹 INSTAGRAM WEBHOOK HELPERS & ENDPOINTS
+// Inserted by Copilot: handles verification, intent parsing, dataverse calls via existing helpers
+// ==============================
+
+function verifyInstagramSignature(payload, signature, appSecret) {
+  if (!signature) return false;
+  try {
+    const expected = crypto.createHmac('sha1', appSecret).update(payload, 'utf8').digest('hex');
+    const parts = signature.split('=');
+    return parts.length === 2 && parts[0] === 'sha1' && parts[1] === expected;
+  } catch (e) {
+    fastify.log.error({ msg: 'verifyInstagramSignature failed', error: e.message });
+    return false;
+  }
+}
+
+function parseIntent(messageText) {
+  const text = (messageText || '').toLowerCase().trim();
+  if (!text) return { intent: 'unknown', params: {} };
+  if (text.includes('login') || text.includes('masuk')) return { intent: 'login', params: {} };
+  if (text.includes('cek cuti') || text.includes('saldo') || text.includes('cuti berapa')) return { intent: 'check_leave_balance', params: { period: new Date().getFullYear().toString() } };
+  if (text.includes('ajukan') || text.includes('apply') || text.includes('request')) return { intent: 'submit_leave', params: { raw_message: messageText } };
+  if (text.includes('data') || text.includes('profil') || text.includes('info')) return { intent: 'get_profile', params: {} };
+  if (text.includes('riwayat') || text.includes('history') || text.includes('daftar cuti')) return { intent: 'get_leave_requests', params: {} };
+  return { intent: 'unknown', params: { raw_message: messageText } };
+}
+
+async function sendInstagramMessage(recipientId, messageText, accessToken) {
+  try {
+    const res = await axios.post(
+      `https://graph.instagram.com/v19.0/${process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID}/messages`,
+      { recipient: { id: recipientId }, message: { text: messageText } },
+      { headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' } }
+    );
+    return res.data;
+  } catch (err) {
+    fastify.log.error({ msg: 'Failed to send Instagram message', recipientId, error: err.response?.data || err.message });
+    throw err;
+  }
+}
+
+function formatInstagramResponse(data, intent) {
+  let response = '';
+  switch (intent) {
+    case 'login':
+      response = '🔐 Login diminta\\n\\nUntuk akses data, sebutkan email karyawan Anda.';
+      break;
+    case 'check_leave_balance':
+      if (data.balances && data.balances.length) {
+        response = '📅 Saldo Cuti Anda:\\n';
+        data.balances.forEach(b => { response += `${b.leave_type_name || b.ecom_name}: ${b.balance || b.ecom_balance} hari\\n`; });
+      } else response = '❌ Tidak ada data saldo cuti untuk tahun ini.';
+      break;
+    case 'get_profile':
+      if (data.employeeName) response = `👤 Profil Anda\\nNama: ${data.employeeName}\\nEmail: ${data.email}`; else response = '❌ Profil tidak ditemukan.';
+      break;
+    case 'get_leave_requests':
+      if (data.requests && data.requests.length) {
+        response = '📋 Riwayat Cuti:\\n';
+        data.requests.slice(0,5).forEach(r => { response += `${r.leave_type}: ${r.start_date} → ${r.end_date} [${r.status}]\\n`; });
+      } else response = '✅ Tidak ada riwayat cuti.';
+      break;
+    default:
+      response = '❓ Perintah tidak dipahami. Coba: login, cek cuti, data, riwayat';
+  }
+  if (response.length > 900) response = response.substring(0,897) + '...';
+  return response;
+}
+
+async function getPSIDEmailMapping(psid) {
+  try { return await kv.get(`instagram:psid:${psid}`); } catch (e) { fastify.log.error({ msg: 'kv.get failed', e: e.message }); return null; }
+}
+
+async function setPSIDEmailMapping(psid, email, ttl = 2592000) { // 30 days
+  try { await kv.setex(`instagram:psid:${psid}`, ttl, email); } catch (e) { fastify.log.error({ msg: 'kv.setex failed', e: e.message }); }
+}
+
+// Verification endpoint (GET) for Facebook/Instagram webhook setup
+fastify.get('/instagram/webhook', async (req, reply) => {
+  const verifyToken = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+  fastify.log.info({ msg: 'instagram webhook verify', ok: !!verifyToken, tokenMatch: verifyToken === process.env.INSTAGRAM_VERIFY_TOKEN });
+  if (verifyToken === process.env.INSTAGRAM_VERIFY_TOKEN) {
+    // Return plain text challenge per webhook verification requirements
+    return reply.type('text/plain').code(200).send(String(challenge || ''));
+  }
+  return reply.code(403).send({ error: 'Verification token invalid' });
+});
+
+// Message receiver (POST)
+fastify.post('/instagram/webhook', async (req, reply) => {
+  fastify.log.info({ msg: 'instagram webhook post', hasSignature: !!req.headers['x-hub-signature'] });
+  try {
+    const signature = req.headers['x-hub-signature'];
+    const appSecret = process.env.INSTAGRAM_APP_SECRET;
+    if (!signature || !appSecret) return reply.code(400).send({ error: 'Missing signature or secret' });
+    const payload = JSON.stringify(req.body || {});
+    if (!verifyInstagramSignature(payload, signature, appSecret)) return reply.code(401).send({ error: 'Signature verification failed' });
+
+    const { entry } = req.body;
+    if (!entry || !Array.isArray(entry)) return reply.code(400).send({ error: 'Invalid payload' });
+
+    for (const evt of entry) {
+      if (evt.messaging && Array.isArray(evt.messaging)) {
+        for (const msg of evt.messaging) {
+          if (!msg.message) continue;
+          const senderId = msg.sender?.id;
+          const messageText = msg.message?.text;
+          if (!senderId || !messageText) continue;
+          // process asynchronously
+          handleInstagramMessage(senderId, messageText).catch(err => fastify.log.error({ msg: 'handleInstagramMessage failed', err: err.message }));
+        }
+      }
+    }
+    return reply.code(200).send({ status: 'received' });
+  } catch (e) {
+    fastify.log.error({ msg: 'instagram webhook error', e: e.message });
+    return reply.code(500).send({ error: 'Internal error' });
+  }
+});
+
+async function handleInstagramMessage(senderId, messageText) {
+  try {
+    let userEmail = await getPSIDEmailMapping(senderId);
+    const { intent, params } = parseIntent(messageText);
+    fastify.log.info({ msg: 'intent parsed', intent, senderId, mapped: !!userEmail });
+
+    // If sensitive actions require mapping/email, prompt user
+    if ((intent === 'check_leave_balance' || intent === 'get_profile' || intent === 'get_leave_requests') && !userEmail) {
+      await sendInstagramMessage(senderId, 'ℹ️ Untuk akses data, sebutkan email karyawan Anda (contoh: nama@ecomindo.com)', process.env.INSTAGRAM_ACCESS_TOKEN);
+      return;
+    }
+
+    // If user sends an email to map
+    if (intent === 'unknown' && messageText.includes('@') && messageText.includes('.')) {
+      const potentialEmail = messageText.trim();
+      try {
+        const minReq = { headers: {}, session: { accessToken: await getAppLevelDataverseToken() } };
+        const res = await dataverseRequest(minReq, 'get', 'ecom_personalinformations', { params: { $filter: `ecom_workemail eq '${potentialEmail}'`, $select: 'ecom_personalinformationid,ecom_employeename' } });
+        if (res.value && res.value.length) {
+          await setPSIDEmailMapping(senderId, potentialEmail);
+          await sendInstagramMessage(senderId, `✅ Email terverifikasi: ${potentialEmail}\\n\\nSekarang coba: cek cuti, data, riwayat`, process.env.INSTAGRAM_ACCESS_TOKEN);
+          return;
+        }
+      } catch (e) { fastify.log.error({ msg: 'validate email failed', e: e.message }); }
+      await sendInstagramMessage(senderId, '❌ Email tidak ditemukan di sistem. Pastikan email kerja Anda.', process.env.INSTAGRAM_ACCESS_TOKEN);
+      return;
+    }
+
+    let responseData = {};
+    switch (intent) {
+      case 'login':
+        responseData = { action: 'login' };
+        break;
+      case 'check_leave_balance':
+        if (userEmail) {
+          try {
+            const minReq = { headers: {}, session: { accessToken: await getAppLevelDataverseToken() }, user: { email: userEmail } };
+            const personal = await dataverseRequest(minReq, 'get', 'ecom_personalinformations', { params: { $filter: `ecom_workemail eq '${userEmail}'`, $select: 'ecom_personalinformationid' } });
+            if (!personal.value?.length) { responseData = { error: 'Personal info not found' }; break; }
+            const employeeId = personal.value[0].ecom_personalinformationid;
+            const period = params.period || new Date().getFullYear().toString();
+            const balancesRes = await dataverseRequest(minReq, 'get', 'ecom_leaveusages', { params: { $filter: `_ecom_employee_value eq ${employeeId} and ecom_period eq '${period}'`, $select: 'ecom_balance,_ecom_leavetype_value,ecom_name' } });
+            const balances = (balancesRes.value || []).map(b => ({ leave_type_name: b.ecom_name, balance: b.ecom_balance }));
+            responseData = { balances };
+          } catch (e) { fastify.log.error({ msg: 'fetch balance failed', e: e.message }); responseData = { error: 'Failed to fetch balance' }; }
+        }
+        break;
+      case 'get_profile':
+        if (userEmail) {
+          try {
+            const minReq = { headers: {}, session: { accessToken: await getAppLevelDataverseToken() }, user: { email: userEmail } };
+            const personalInfoRes = await dataverseRequest(minReq, 'get', 'ecom_personalinformations', { params: { $filter: `ecom_workemail eq '${userEmail}'`, $select: 'ecom_employeename' } });
+            if (personalInfoRes.value?.length) responseData = { employeeName: personalInfoRes.value[0].ecom_employeename, email: userEmail }; else responseData = { error: 'Profile not found' };
+          } catch (e) { fastify.log.error({ msg: 'fetch profile failed', e: e.message }); responseData = { error: 'Failed to fetch profile' }; }
+        }
+        break;
+      case 'get_leave_requests':
+        if (userEmail) {
+          try {
+            const minReq = { headers: {}, session: { accessToken: await getAppLevelDataverseToken() }, user: { email: userEmail } };
+            const personal = await dataverseRequest(minReq, 'get', 'ecom_personalinformations', { params: { $filter: `ecom_workemail eq '${userEmail}'`, $select: 'ecom_personalinformationid' } });
+            if (personal.value?.length) {
+              const employeeId = personal.value[0].ecom_personalinformationid;
+              const requestsRes = await dataverseRequest(minReq, 'get', 'ecom_employeeleaves', { params: { $filter: `_ecom_employee_value eq ${employeeId}`, $select: 'ecom_name,ecom_startdate,ecom_enddate,ecom_leavestatus', $orderby: 'createdon desc', $top: 10 } });
+              const requests = (requestsRes.value || []).map(r => ({ leave_type: r.ecom_name, start_date: r.ecom_startdate, end_date: r.ecom_enddate, status: r.ecom_leavestatus }));
+              responseData = { requests };
+            }
+          } catch (e) { fastify.log.error({ msg: 'fetch requests failed', e: e.message }); responseData = { error: 'Failed to fetch requests' }; }
+        }
+        break;
+      default:
+        responseData = { action: 'unknown' };
+    }
+
+    const text = formatInstagramResponse(responseData, intent);
+    await sendInstagramMessage(senderId, text, process.env.INSTAGRAM_ACCESS_TOKEN);
+    fastify.log.info({ msg: 'instagram reply sent', senderId, intent });
+
+  } catch (e) {
+    fastify.log.error({ msg: 'handleInstagramMessage unexpected', e: e.message });
+    try { await sendInstagramMessage(senderId, '❌ Terjadi kesalahan. Silakan coba lagi nanti.', process.env.INSTAGRAM_ACCESS_TOKEN); } catch (er) { fastify.log.error({ msg: 'failed to send error message', er: er.message }); }
+  }
+}
+
+const EmojiMap = { login: '🔐', check_leave_balance: '📅', get_profile: '👤', get_leave_requests: '📋' };
 
 console.log("JWT_SECRET:", process.env.JWT_SECRET ? "Loaded" : "Not Found - Using Default");
 console.log("ADMIN_EMAILS:", process.env.ADMIN_EMAILS);
