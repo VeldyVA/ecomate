@@ -56,6 +56,8 @@ fastify.addContentTypeParser('application/json', { parseAs: 'string' }, function
     return done(err, undefined);
   }
   try {
+    // Preserve raw body string for webhook signature verification
+    try { req.rawBody = body; } catch (e) { /* ignore if unable to set */ }
     const json = JSON.parse(body);
     done(null, json);
   } catch (e) {
@@ -863,8 +865,9 @@ function parseIntent(messageText) {
 
 async function sendInstagramMessage(recipientId, messageText, accessToken) {
   try {
+    // Use Graph API domain (graph.facebook.com) for Messenger/Instagram messaging
     const res = await axios.post(
-      `https://graph.instagram.com/v19.0/${process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID}/messages`,
+      `https://graph.facebook.com/v19.0/${process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID}/messages`,
       { recipient: { id: recipientId }, message: { text: messageText } },
       { headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' } }
     );
@@ -930,7 +933,8 @@ fastify.post('/instagram/webhook', async (req, reply) => {
     const signature = req.headers['x-hub-signature'];
     const appSecret = process.env.INSTAGRAM_APP_SECRET;
     if (!signature || !appSecret) return reply.code(400).send({ error: 'Missing signature or secret' });
-    const payload = JSON.stringify(req.body || {});
+    // Use the raw body (preserved by our content-type parser) for HMAC verification
+    const payload = req.rawBody || JSON.stringify(req.body || {});
     if (!verifyInstagramSignature(payload, signature, appSecret)) return reply.code(401).send({ error: 'Signature verification failed' });
 
     const { entry } = req.body;
