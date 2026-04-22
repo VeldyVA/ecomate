@@ -955,7 +955,7 @@ fastify.post('/instagram/webhook', async (req, reply) => {
         fastify.log.info({ msg: 'Processing messaging events', eventCount: evt.messaging.length });
         for (const msg of evt.messaging) {
           if (!msg.message) {
-            fastify.log.info({ msg: 'Skipping non-message event' });
+            fastify.log.info({ msg: 'Skipping non-message event', eventType: Object.keys(msg).filter(k => k !== 'sender' && k !== 'recipient') });
             continue;
           }
           const senderId = msg.sender?.id;
@@ -969,7 +969,7 @@ fastify.post('/instagram/webhook', async (req, reply) => {
           handleInstagramMessage(senderId, messageText).catch(err => fastify.log.error({ msg: 'handleInstagramMessage failed', err: err.message }));
         }
       } else {
-        fastify.log.info({ msg: 'Skipping non-messaging event' });
+        fastify.log.info({ msg: 'Skipping non-messaging event', eventType: Object.keys(evt) });
       }
     }
     return reply.code(200).send({ status: 'received' });
