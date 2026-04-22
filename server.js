@@ -969,8 +969,8 @@ fastify.post('/instagram/webhook', async (req, reply) => {
             continue;
           }
           fastify.log.info({ msg: 'Calling handleInstagramMessage', senderId, messageText });
-          // process asynchronously
-          handleInstagramMessage(senderId, messageText).catch(err => fastify.log.error({ msg: 'handleInstagramMessage failed', err: err.message }));
+          // process synchronously for debugging
+          await handleInstagramMessage(senderId, messageText).catch(err => fastify.log.error({ msg: 'handleInstagramMessage failed', err: err.message }));
         }
       } else {
         fastify.log.info({ msg: 'Skipping non-messaging event', eventType: Object.keys(evt) });
