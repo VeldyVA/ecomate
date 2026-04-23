@@ -888,7 +888,7 @@ function formatInstagramResponse(data, intent) {
   let response = '';
   switch (intent) {
     case 'login':
-      response = '🔐 Login diminta\\n\\nUntuk akses data, sebutkan email karyawan Anda.';
+      response = '🔐 Login diminta\\n\\nUntuk akses data, klik link ini untuk login: https://ecomate-phi.vercel.app/login\\n\\nSetelah login, salin OTP dari browser dan kirim ke sini.';
       break;
     case 'check_leave_balance':
       if (data.balances && data.balances.length) {
@@ -918,6 +918,50 @@ async function getPSIDEmailMapping(psid) {
 
 async function setPSIDEmailMapping(psid, email, ttl = 2592000) { // 30 days
   try { await kv.setex(`instagram:psid:${psid}`, ttl, email); } catch (e) { fastify.log.error({ msg: 'kv.setex failed', e: e.message }); }
+}
+
+// Helper functions for data fetching (shared with endpoints)
+async function getLeaveBalance(email) {
+  try {
+    const minReq = { headers: {}, session: { accessToken: await getAppLevelDataverseToken() }, user: { email } };
+    const personal = await dataverseRequest(minReq, 'get', 'ecom_personalinformations', { params: { $filter: `ecom_workemail eq '${email}'`, $select: 'ecom_personalinformationid' } });
+    if (!personal.value?.length) return { error: 'Personal info not found' };
+    const employeeId = personal.value[0].ecom_personalinformationid;
+    const period = new Date().getFullYear().toString();
+    const balancesRes = await dataverseRequest(minReq, 'get', 'ecom_leaveusages', { params: { $filter: `_ecom_employee_value eq ${employeeId} and ecom_period eq '${period}'`, $select: 'ecom_balance,_ecom_leavetype_value,ecom_name' } });
+    const balances = (balancesRes.value || []).map(b => ({ leave_type_name: b.ecom_name, balance: b.ecom_balance }));
+    return { balances };
+  } catch (e) {
+    fastify.log.error({ msg: 'getLeaveBalance failed', e: e.message });
+    return { error: 'Failed to fetch balance' };
+  }
+}
+
+async function getProfile(email) {
+  try {
+    const minReq = { headers: {}, session: { accessToken: await getAppLevelDataverseToken() }, user: { email } };
+    const personalInfoRes = await dataverseRequest(minReq, 'get', 'ecom_personalinformations', { params: { $filter: `ecom_workemail eq '${email}'`, $select: 'ecom_employeename' } });
+    if (personalInfoRes.value?.length) return { employeeName: personalInfoRes.value[0].ecom_employeename, email };
+    return { error: 'Profile not found' };
+  } catch (e) {
+    fastify.log.error({ msg: 'getProfile failed', e: e.message });
+    return { error: 'Failed to fetch profile' };
+  }
+}
+
+async function getLeaveRequests(email) {
+  try {
+    const minReq = { headers: {}, session: { accessToken: await getAppLevelDataverseToken() }, user: { email } };
+    const personal = await dataverseRequest(minReq, 'get', 'ecom_personalinformations', { params: { $filter: `ecom_workemail eq '${email}'`, $select: 'ecom_personalinformationid' } });
+    if (!personal.value?.length) return { error: 'Personal info not found' };
+    const employeeId = personal.value[0].ecom_personalinformationid;
+    const requestsRes = await dataverseRequest(minReq, 'get', 'ecom_employeeleaves', { params: { $filter: `_ecom_employee_value eq ${employeeId}`, $select: 'ecom_name,ecom_startdate,ecom_enddate,ecom_leavestatus', $orderby: 'createdon desc', $top: 10 } });
+    const requests = (requestsRes.value || []).map(r => ({ leave_type: r.ecom_name, start_date: r.ecom_startdate, end_date: r.ecom_enddate, status: r.ecom_leavestatus }));
+    return { requests };
+  } catch (e) {
+    fastify.log.error({ msg: 'getLeaveRequests failed', e: e.message });
+    return { error: 'Failed to fetch requests' };
+  }
 }
 
 // Verification endpoint (GET) for Facebook/Instagram webhook setup
@@ -992,13 +1036,35 @@ async function handleInstagramMessage(senderId, messageText) {
 
     // If sensitive actions require mapping/email, prompt user
     if ((intent === 'check_leave_balance' || intent === 'get_profile' || intent === 'get_leave_requests') && !userEmail) {
-      fastify.log.info({ msg: 'Attempting to send email request message', senderId, message: 'ℹ️ Untuk akses data, sebutkan email karyawan Anda (contoh: nama@ecomindo.com)', accessTokenStart: process.env.INSTAGRAM_ACCESS_TOKEN?.substring(0, 5) });
-      await sendInstagramMessage(senderId, 'ℹ️ Untuk akses data, sebutkan email karyawan Anda (contoh: nama@ecomindo.com)', process.env.INSTAGRAM_ACCESS_TOKEN);
-      fastify.log.info({ msg: 'Email request message sent successfully (or attempted)', senderId });
+      fastify.log.info({ msg: 'Attempting to send login link message', senderId });
+      await sendInstagramMessage(senderId, 'ℹ️ Untuk akses data, klik link ini untuk login: https://ecomate-phi.vercel.app/login\n\nSetelah login, salin OTP dari browser dan kirim ke sini.', process.env.INSTAGRAM_ACCESS_TOKEN);
+      fastify.log.info({ msg: 'Login link message sent successfully (or attempted)', senderId });
       return;
     }
 
-    // If user sends an email to map
+    // If user sends OTP (6 digits)
+    if (messageText.match(/^\d{6}$/)) {
+      const otp = messageText;
+      try {
+        const jwt = await kv.get(otp);
+        if (jwt) {
+          const decoded = fastify.jwt.verify(jwt);
+          const email = decoded.email;
+          await setPSIDEmailMapping(senderId, email);
+          await sendInstagramMessage(senderId, `✅ Login berhasil! Email: ${email}\n\nSekarang coba: cek cuti, data, riwayat`, process.env.INSTAGRAM_ACCESS_TOKEN);
+          return;
+        } else {
+          await sendInstagramMessage(senderId, '❌ OTP tidak valid atau sudah expired. Coba login lagi.', process.env.INSTAGRAM_ACCESS_TOKEN);
+          return;
+        }
+      } catch (e) {
+        fastify.log.error({ msg: 'OTP validation failed', e: e.message });
+        await sendInstagramMessage(senderId, '❌ Terjadi kesalahan saat validasi OTP.', process.env.INSTAGRAM_ACCESS_TOKEN);
+        return;
+      }
+    }
+
+    // If user sends an email to map (fallback, but now prefer OTP)
     if (intent === 'unknown' && messageText.includes('@') && messageText.includes('.')) {
       const potentialEmail = messageText.trim();
       try {
@@ -1020,41 +1086,13 @@ async function handleInstagramMessage(senderId, messageText) {
         responseData = { action: 'login' };
         break;
       case 'check_leave_balance':
-        if (userEmail) {
-          try {
-            const minReq = { headers: {}, session: { accessToken: await getAppLevelDataverseToken() }, user: { email: userEmail } };
-            const personal = await dataverseRequest(minReq, 'get', 'ecom_personalinformations', { params: { $filter: `ecom_workemail eq '${userEmail}'`, $select: 'ecom_personalinformationid' } });
-            if (!personal.value?.length) { responseData = { error: 'Personal info not found' }; break; }
-            const employeeId = personal.value[0].ecom_personalinformationid;
-            const period = params.period || new Date().getFullYear().toString();
-            const balancesRes = await dataverseRequest(minReq, 'get', 'ecom_leaveusages', { params: { $filter: `_ecom_employee_value eq ${employeeId} and ecom_period eq '${period}'`, $select: 'ecom_balance,_ecom_leavetype_value,ecom_name' } });
-            const balances = (balancesRes.value || []).map(b => ({ leave_type_name: b.ecom_name, balance: b.ecom_balance }));
-            responseData = { balances };
-          } catch (e) { fastify.log.error({ msg: 'fetch balance failed', e: e.message }); responseData = { error: 'Failed to fetch balance' }; }
-        }
+        if (userEmail) responseData = await getLeaveBalance(userEmail);
         break;
       case 'get_profile':
-        if (userEmail) {
-          try {
-            const minReq = { headers: {}, session: { accessToken: await getAppLevelDataverseToken() }, user: { email: userEmail } };
-            const personalInfoRes = await dataverseRequest(minReq, 'get', 'ecom_personalinformations', { params: { $filter: `ecom_workemail eq '${userEmail}'`, $select: 'ecom_employeename' } });
-            if (personalInfoRes.value?.length) responseData = { employeeName: personalInfoRes.value[0].ecom_employeename, email: userEmail }; else responseData = { error: 'Profile not found' };
-          } catch (e) { fastify.log.error({ msg: 'fetch profile failed', e: e.message }); responseData = { error: 'Failed to fetch profile' }; }
-        }
+        if (userEmail) responseData = await getProfile(userEmail);
         break;
       case 'get_leave_requests':
-        if (userEmail) {
-          try {
-            const minReq = { headers: {}, session: { accessToken: await getAppLevelDataverseToken() }, user: { email: userEmail } };
-            const personal = await dataverseRequest(minReq, 'get', 'ecom_personalinformations', { params: { $filter: `ecom_workemail eq '${userEmail}'`, $select: 'ecom_personalinformationid' } });
-            if (personal.value?.length) {
-              const employeeId = personal.value[0].ecom_personalinformationid;
-              const requestsRes = await dataverseRequest(minReq, 'get', 'ecom_employeeleaves', { params: { $filter: `_ecom_employee_value eq ${employeeId}`, $select: 'ecom_name,ecom_startdate,ecom_enddate,ecom_leavestatus', $orderby: 'createdon desc', $top: 10 } });
-              const requests = (requestsRes.value || []).map(r => ({ leave_type: r.ecom_name, start_date: r.ecom_startdate, end_date: r.ecom_enddate, status: r.ecom_leavestatus }));
-              responseData = { requests };
-            }
-          } catch (e) { fastify.log.error({ msg: 'fetch requests failed', e: e.message }); responseData = { error: 'Failed to fetch requests' }; }
-        }
+        if (userEmail) responseData = await getLeaveRequests(userEmail);
         break;
       default:
         responseData = { action: 'unknown' };
