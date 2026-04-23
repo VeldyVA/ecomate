@@ -865,10 +865,16 @@ function parseIntent(messageText) {
 
 async function sendInstagramMessage(recipientId, messageText, accessToken) {
   try {
-    fastify.log.info({ msg: 'Sending Instagram message via Graph API', recipientId, messageText: messageText.substring(0, 50) + '...', businessAccountId: process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID, accessTokenStart: accessToken?.substring(0, 5) });
+    fastify.log.info({
+  msg: 'Sending Instagram message via Graph API',
+  recipientId,
+  messageText: messageText.substring(0, 50) + '...',
+  endpoint: 'me/messages',
+  accessTokenStart: accessToken?.substring(0, 5)
+});
     fastify.log.info({ msg: 'DEBUG: About to make axios.post call to Instagram Graph API' });
     const res = await axios.post(
-      `https://graph.facebook.com/v19.0/${process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID}/messages`,
+      `https://graph.facebook.com/v25.0/me/messages`,
       { recipient: { id: recipientId }, message: { text: messageText } },
       {
         headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
@@ -999,39 +1005,89 @@ fastify.post('/instagram/webhook', async (req, reply) => {
     fastify.log.info({ msg: 'Instagram payload parsed', entryCount: entry.length });
 
     for (const evt of entry) {
-      if (evt.messaging && Array.isArray(evt.messaging)) {
-        fastify.log.info({ msg: 'Processing messaging events', eventCount: evt.messaging.length });
-        for (const msg of evt.messaging) {
-          if (!msg.message) {
-            fastify.log.info({ msg: 'Skipping non-message event', eventType: Object.keys(msg).filter(k => k !== 'sender' && k !== 'recipient') });
-            continue;
+
+  // ✅ INSTAGRAM (changes format)
+  if (evt.changes && Array.isArray(evt.changes)) {
+    fastify.log.info({ msg: 'Processing IG changes', count: evt.changes.length });
+
+    for (const change of evt.changes) {
+      if (change.field === 'messages') {
+        const messages = change.value?.messages;
+
+        if (Array.isArray(messages)) {
+          for (const msg of messages) {
+            const senderId = msg.from?.id;
+            const messageText = msg.text || '[non-text message]';
+
+            if (!senderId) continue;
+
+            fastify.log.info({
+              msg: 'IG message received',
+              senderId,
+              messageText
+            });
+
+            handleInstagramMessage(senderId, messageText)
+              .catch(err => fastify.log.error({
+                msg: 'handleInstagramMessage failed',
+                err: err.message
+              }));
           }
-          const senderId = msg.sender?.id;
-          const messageText = msg.message?.text;
-          if (!senderId || !messageText) {
-            fastify.log.info({ msg: 'Skipping message without senderId or text', senderId: !!senderId, messageText: !!messageText });
-            continue;
-          }
-          fastify.log.info({ msg: 'Calling handleInstagramMessage', senderId, messageText });
-          // process asynchronously
-          handleInstagramMessage(senderId, messageText).catch(err => fastify.log.error({ msg: 'handleInstagramMessage failed', err: err.message }));
         }
-      } else {
-        fastify.log.info({ msg: 'Skipping non-messaging event', eventType: Object.keys(evt) });
       }
     }
-    return reply.code(200).send({ status: 'received' });
-  } catch (e) {
-    fastify.log.error({ msg: 'instagram webhook error', e: e.message });
-    return reply.code(500).send({ error: 'Internal error' });
   }
+
+  // ✅ FALLBACK (Messenger-style / legacy)
+  else if (evt.messaging && Array.isArray(evt.messaging)) {
+    fastify.log.info({ msg: 'Processing messaging events', eventCount: evt.messaging.length });
+
+    for (const msg of evt.messaging) {
+      if (!msg.message) continue;
+
+      const senderId = msg.sender?.id;
+      const messageText = msg.message?.text || '[non-text message]';
+
+      if (!senderId) continue;
+
+      fastify.log.info({
+        msg: 'Messenger message received',
+        senderId,
+        messageText
+      });
+
+      handleInstagramMessage(senderId, messageText)
+        .catch(err => fastify.log.error({
+          msg: 'handleInstagramMessage failed',
+          err: err.message
+        }));
+    }
+  }
+    
+  // ❗ Unknown format
+  else {
+    fastify.log.warn({
+      msg: 'Unknown event format',
+      evt
+    });
+  }
+}
+  
+return reply.code(200).send({ status: 'received' });
+} catch (e) {
+  fastify.log.error({ msg: 'instagram webhook error', e: e.message });
+  return reply.code(500).send({ error: 'Internal error' });
+}
 });
 
 async function handleInstagramMessage(senderId, messageText) {
   try {
     fastify.log.info({ msg: 'handleInstagramMessage started', senderId, messageText });
+    fastify.log.info({ msg: 'DEBUG: before getPSIDEmailMapping' });
     let userEmail = await getPSIDEmailMapping(senderId);
+    fastify.log.info({ msg: 'DEBUG: after getPSIDEmailMapping', userEmail });
     const { intent, params } = parseIntent(messageText);
+    fastify.log.info({ msg: 'DEBUG: after parseIntent', intent, params });
     fastify.log.info({ msg: 'intent parsed', intent, senderId, mapped: !!userEmail });
 
     // If sensitive actions require mapping/email, prompt user
@@ -2803,4 +2859,4 @@ fastify.get("/admin/summary-peer-review/search", { preValidation: [fastify.authe
       details: err.response?.data?.error?.message || err.message,
     });
   }
-});
+})
