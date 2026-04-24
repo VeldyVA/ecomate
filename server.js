@@ -864,29 +864,66 @@ function parseIntent(messageText) {
 }
 
 async function sendInstagramMessage(recipientId, messageText, accessToken) {
+  const token = (accessToken || process.env.INSTAGRAM_ACCESS_TOKEN || '').trim();
+  if (!token) {
+    fastify.log.error({ msg: 'INSTAGRAM_ACCESS_TOKEN is missing. Cannot send message.' });
+    return null;
+  }
+
+  const endpoint = 'https://graph.instagram.com/v25.0/me/messages';
+  const payload = {
+    recipient: { id: String(recipientId) },
+    message: { text: String(messageText || '') }
+  };
+
   try {
     fastify.log.info({
-  msg: 'Sending Instagram message via Graph API',
-  recipientId,
-  messageText: messageText.substring(0, 50) + '...',
-  endpoint: 'me/messages',
-  accessTokenStart: accessToken?.substring(0, 5)
-});
-    fastify.log.info({ msg: 'DEBUG: About to make axios.post call to Instagram Graph API' });
-    const res = await axios.post(
-      `https://graph.facebook.com/v25.0/me/messages`,
-      { recipient: { id: recipientId }, message: { text: messageText } },
-      {
-        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-        timeout: 5000 // Add a 5-second timeout
-      }
-    );
-    fastify.log.info({ msg: 'DEBUG: axios.post call completed successfully' });
-    fastify.log.info({ msg: 'Instagram message sent successfully', recipientId, responseData: res.data });
+      msg: 'Sending Instagram message via Graph API',
+      endpoint,
+      recipientId: String(recipientId),
+      messagePreview: String(messageText || '').substring(0, 50),
+      tokenPrefix: token.substring(0, 6)
+    });
+
+    // Primary request format: Authorization Bearer header (same as tested curl).
+    const res = await axios.post(endpoint, payload, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 10000
+    });
+
+    fastify.log.info({
+      msg: 'Instagram message sent successfully',
+      recipientId: String(recipientId),
+      responseData: res.data
+    });
     return res.data;
   } catch (err) {
-    fastify.log.error({ msg: 'Failed to send Instagram message', recipientId, error: err.message, stack: err.stack, errorCode: err.code, responseData: err.response?.data });
-    throw err;
+    // Fallback for environments that still expect access_token query param.
+    try {
+      const fallbackRes = await axios.post(endpoint, payload, {
+        params: { access_token: token },
+        headers: { 'Content-Type': 'application/json' },
+        timeout: 10000
+      });
+      fastify.log.info({
+        msg: 'Instagram message sent successfully via fallback query token',
+        recipientId: String(recipientId),
+        responseData: fallbackRes.data
+      });
+      return fallbackRes.data;
+    } catch (fallbackErr) {
+      fastify.log.error({
+        msg: 'Failed to send Instagram message',
+        recipientId: String(recipientId),
+        error: fallbackErr.message,
+        status: fallbackErr.response?.status,
+        responseData: fallbackErr.response?.data
+      });
+      throw fallbackErr;
+    }
   }
 }
 
