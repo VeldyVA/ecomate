@@ -1091,7 +1091,8 @@ function formatInstagramResponse(data, intent) {
     default:
       response = '❓ Perintah tidak dipahami. Ketik bantuan untuk lihat daftar perintah.';
   }
-  if (response.length > 900) response = response.substring(0,897) + '...';
+  const maxResponseLength = (intent === 'get_profile' || intent === 'admin_query') ? 1800 : 900;
+  if (response.length > maxResponseLength) response = response.substring(0, maxResponseLength - 3) + '...';
   return response;
 }
 
@@ -1227,22 +1228,66 @@ async function handleAdminQuery(userMapping, params) {
       const profileRes = await dataverseRequest(minReq, 'get', 'ecom_personalinformations', {
         params: {
           $filter: `ecom_personalinformationid eq ${employeeId}`,
-          $select: 'ecom_employeename,ecom_workemail,ecom_nik,ecom_phonenumber,ecom_dateofemployment,ecom_address,ecom_personalemail'
+          $select: [
+            'ecom_personalinformationid', 'ecom_nik', 'ecom_employeename', 'ecom_gender', 'ecom_dateofbirth',
+            'ecom_phonenumber', 'statecode', 'ecom_startwork', 'ecom_workexperience', 'ecom_dateofemployment',
+            'ecom_emergencycontactname', 'ecom_emergencycontactaddress', 'ecom_emergencycontractphonenumber',
+            'ecom_relationship', 'ecom_address', 'ecom_ktpnumber', 'ecom_npwpnumber', 'ecom_profilepicture',
+            'ecom_bankaccountnumber', 'ecom_bpjsnumber', 'ecom_bpjstknumber', 'ecom_maritalstatus',
+            'ecom_numberofdependent', 'ecom_placeofbirth', 'ecom_religion', 'ecom_bankname', 'ecom_accountname',
+            'ecom_personalemail', 'ecom_workemail', 'ecom_insurancenumber'
+          ].join(',')
         }
       });
       const p = profileRes.value?.[0];
       if (!p) return { adminText: '❌ Profil karyawan tidak ditemukan.' };
+
+      try {
+        const latestPositionData = await dataverseRequest(minReq, 'get', 'ecom_employeepositions', {
+          params: {
+            $filter: `_ecom_personalinformation_value eq ${p.ecom_personalinformationid} and statecode eq 0`,
+            $select: 'ecom_startdate',
+            $expand: 'ecom_JobTitle($select=ecom_jobtitle)',
+            $orderby: 'ecom_startdate desc',
+            $top: 1
+          }
+        });
+        p.ecom_jobtitle = latestPositionData.value?.[0]?.ecom_JobTitle?.ecom_jobtitle || null;
+      } catch (positionErr) {
+        fastify.log.error({ msg: 'admin profile: position lookup failed', e: positionErr.message });
+        p.ecom_jobtitle = null;
+      }
+
+      const fields = [
+        ['Nama', p.ecom_employeename],
+        ['Email Kerja', p.ecom_workemail],
+        ['Email Personal', p.ecom_personalemail],
+        ['NIK', p.ecom_nik],
+        ['No HP', p.ecom_phonenumber],
+        ['Gender', p.ecom_gender],
+        ['Tanggal Lahir', p.ecom_dateofbirth],
+        ['Tempat Lahir', p.ecom_placeofbirth],
+        ['Agama', p.ecom_religion],
+        ['Status Menikah', p.ecom_maritalstatus],
+        ['Jumlah Tanggungan', p.ecom_numberofdependent],
+        ['Alamat', p.ecom_address],
+        ['Jabatan', p.ecom_jobtitle],
+        ['Tanggal Join', p.ecom_dateofemployment],
+        ['Bank', p.ecom_bankname],
+        ['No Rekening', p.ecom_bankaccountnumber],
+        ['NPWP', p.ecom_npwpnumber],
+        ['No KTP', p.ecom_ktpnumber],
+        ['BPJS Kesehatan', p.ecom_bpjsnumber],
+        ['BPJS TK', p.ecom_bpjstknumber],
+        ['No Asuransi', p.ecom_insurancenumber],
+        ['Kontak Darurat', p.ecom_emergencycontactname],
+        ['Alamat Darurat', p.ecom_emergencycontactaddress],
+        ['Telp Darurat', p.ecom_emergencycontractphonenumber],
+        ['Hubungan Darurat', p.ecom_relationship]
+      ].filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== '');
+
       return {
-        adminText: [
-          '🧾 Profil Karyawan',
-          `Nama: ${p.ecom_employeename || '-'}`,
-          `Email Kerja: ${p.ecom_workemail || '-'}`,
-          `Email Personal: ${p.ecom_personalemail || '-'}`,
-          `NIK: ${p.ecom_nik || '-'}`,
-          `No HP: ${p.ecom_phonenumber || '-'}`,
-          `Tanggal Join: ${p.ecom_dateofemployment || '-'}`,
-          `Alamat: ${p.ecom_address || '-'}`
-        ].join('\n')
+        adminText: `🧾 Profil Karyawan Lengkap\n${fields.map(([k, v]) => `${k}: ${v}`).join('\n')}`
       };
     }
 
