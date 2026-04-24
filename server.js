@@ -1074,7 +1074,19 @@ function formatInstagramResponse(data, intent) {
       }
       break;
     case 'submit_leave':
-      response = '📝 Format pengajuan via DM: ajukan cuti <leaveTypeId> <YYYY-MM-DD> <jumlah_hari> <alasan(optional)>\nContoh: ajukan cuti 11111111-2222-3333-4444-555555555555 2026-05-05 2 keperluan keluarga';
+      if (data.ok) {
+        response = [
+          '✅ Pengajuan cuti berhasil dibuat.',
+          `Leave ID: ${data.leaveId || '-'}`,
+          `Tipe Cuti: ${data.leaveTypeName || '-'}`,
+          `Periode: ${data.startDate || '-'} s/d ${data.endDate || '-'}`,
+          `Masuk Kerja: ${data.returnDate || '-'}`,
+          `Jumlah Hari: ${data.days || 0}`,
+          `Sisa Saldo: ${data.balanceRemaining ?? '-'}`
+        ].join('\n');
+      } else {
+        response = `❌ Gagal ajukan cuti. ${data.message || ''}`.trim();
+      }
       break;
     default:
       response = '❓ Perintah tidak dipahami. Ketik bantuan untuk lihat daftar perintah.';
@@ -1489,6 +1501,207 @@ async function getPeerReviewSummary(email) {
   }
 }
 
+function parseSubmitLeaveCommand(rawMessage) {
+  const raw = String(rawMessage || '').trim();
+  const regex = /^ajukan\s+cuti\s+([0-9a-fA-F-]{36})\s+(\d{4}-\d{2}-\d{2})\s+(\d+)(?:\s+(.+))?$/i;
+  const m = raw.match(regex);
+  if (!m) return null;
+  return {
+    leaveTypeId: m[1],
+    startDate: m[2],
+    days: Number(m[3]),
+    reason: (m[4] || '').trim() || null,
+  };
+}
+
+async function submitLeaveRequestViaDm(email, rawMessage) {
+  const parsed = parseSubmitLeaveCommand(rawMessage);
+  if (!parsed) {
+    return {
+      ok: false,
+      error: 'format',
+      message: 'Format pengajuan: ajukan cuti <leaveTypeId> <YYYY-MM-DD> <jumlah_hari> <alasan(optional)>'
+    };
+  }
+
+  const { leaveTypeId, startDate, days, reason } = parsed;
+  if (!leaveTypeId || !startDate || !days) {
+    return { ok: false, message: 'leaveTypeId, startDate, dan days wajib diisi.' };
+  }
+
+  if (!Number.isInteger(days) || days <= 0) {
+    return { ok: false, message: 'Jumlah hari harus bilangan bulat positif.' };
+  }
+
+  let start;
+  try {
+    start = new Date(startDate);
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    if (start < today) return { ok: false, message: 'Start date tidak boleh di masa lalu.' };
+
+    const dayOfWeek = start.getUTCDay();
+    if (dayOfWeek === 0 || dayOfWeek === 6) {
+      return { ok: false, message: `Start date ${startDate} jatuh di weekend.` };
+    }
+  } catch {
+    return { ok: false, message: 'Format tanggal tidak valid. Gunakan YYYY-MM-DD.' };
+  }
+
+  try {
+    const minReq = {
+      headers: {},
+      session: { accessToken: await getAppLevelDataverseToken() },
+      user: { email, permission: getPermissionByEmail(email) }
+    };
+
+    const leaveYear = start.getUTCFullYear().toString();
+    const personalInfoRes = await dataverseRequest(minReq, 'get', 'ecom_personalinformations', {
+      params: {
+        $filter: `ecom_workemail eq '${email}'`,
+        $select: 'ecom_personalinformationid,ecom_workemail,ecom_employeename,ecom_nik,ecom_dateofemployment'
+      }
+    });
+
+    if (!personalInfoRes.value?.length) {
+      return { ok: false, message: `Data personal tidak ditemukan untuk ${email}.` };
+    }
+
+    const employeeInfo = personalInfoRes.value.sort((a, b) =>
+      (b.ecom_employeename || '').localeCompare(a.ecom_employeename || '')
+    )[0];
+    const employeeGuid = employeeInfo.ecom_personalinformationid;
+
+    const balancesRes = await dataverseRequest(minReq, 'get', 'ecom_leaveusages', {
+      params: {
+        $filter: `_ecom_employee_value eq ${employeeGuid} and ecom_period eq '${leaveYear}'`,
+        $select: 'ecom_balance,_ecom_leavetype_value,ecom_period,ecom_name'
+      }
+    });
+
+    if (!balancesRes.value?.length) {
+      return { ok: false, message: `Saldo cuti ${leaveYear} tidak ditemukan.` };
+    }
+
+    const usage = balancesRes.value.find((u) => u._ecom_leavetype_value === leaveTypeId);
+    if (!usage) {
+      return { ok: false, message: `Leave type ${leaveTypeId} tidak tersedia di saldo ${leaveYear}.` };
+    }
+
+    const currentBalance = usage.ecom_balance || 0;
+    if (currentBalance < days) {
+      return { ok: false, message: `Saldo tidak cukup. Available: ${currentBalance}, requested: ${days}.` };
+    }
+
+    const endDate = new Date(start);
+    let daysAdded = 0;
+    while (daysAdded < days - 1) {
+      endDate.setUTCDate(endDate.getUTCDate() + 1);
+      const d = endDate.getUTCDay();
+      if (d !== 0 && d !== 6) daysAdded++;
+    }
+    const endDateStr = endDate.toISOString().split('T')[0];
+    const returnDateStr = calculateReturnDate(endDateStr);
+
+    const overlapError = await checkForOverlappingLeave(minReq, employeeGuid, startDate, endDateStr);
+    if (overlapError) {
+      return { ok: false, message: `Tanggal cuti bentrok. ${overlapError}` };
+    }
+
+    const newLeaveRequest = {
+      'ecom_Employee@odata.bind': `/ecom_personalinformations(${employeeGuid})`,
+      'ecom_LeaveType@odata.bind': `/ecom_leavetypes(${leaveTypeId})`,
+      ecom_name: `${employeeInfo.ecom_nik} - ${employeeInfo.ecom_employeename} - Leave request`,
+      ecom_startdate: startDate,
+      ecom_enddate: endDateStr,
+      ecom_returndate: returnDateStr,
+      ecom_numberofdays: days,
+      ecom_reason: reason || null
+    };
+
+    const inserted = await dataverseRequest(minReq, 'post', 'ecom_employeeleaves', { data: newLeaveRequest });
+    const leaveId = inserted.ecom_employeeleaveid || inserted.ecom_leaverequestid;
+
+    try {
+      const [balanceThis, balanceNext] = await Promise.all([
+        dataverseRequest(minReq, 'get', 'ecom_leaveusages', {
+          params: {
+            $filter: `_ecom_employee_value eq ${employeeGuid} and ecom_period eq '${leaveYear}'`,
+            $select: 'ecom_leaveusageid'
+          }
+        }),
+        dataverseRequest(minReq, 'get', 'ecom_leaveusages', {
+          params: {
+            $filter: `_ecom_employee_value eq ${employeeGuid} and ecom_period eq '${parseInt(leaveYear, 10) + 1}'`,
+            $select: 'ecom_leaveusageid'
+          }
+        })
+      ]);
+
+      const thisBalanceId = balanceThis.value?.[0]?.ecom_leaveusageid;
+      const nextBalanceId = balanceNext.value?.[0]?.ecom_leaveusageid;
+      if (leaveId && (thisBalanceId || nextBalanceId)) {
+        await dataverseRequest(minReq, 'patch', `ecom_employeeleaves(${leaveId})`, {
+          data: {
+            ...(thisBalanceId && { 'ecom_LeaveBalanceThisPeriod@odata.bind': `/ecom_leaveusages(${thisBalanceId})` }),
+            ...(nextBalanceId && { 'ecom_LeaveBalanceNextPeriod@odata.bind': `/ecom_leaveusages(${nextBalanceId})` })
+          }
+        });
+      }
+    } catch (linkErr) {
+      fastify.log.error({ msg: 'DM leave: failed to link balances', e: linkErr.message });
+    }
+
+    try {
+      if (leaveId) {
+        await dataverseRequest(minReq, 'patch', `ecom_employeeleaves(${leaveId})`, {
+          data: {
+            ecom_totaldaysthisperiod: days,
+            ecom_totaldaysnextperiod: 0
+          }
+        });
+      }
+    } catch (numErr) {
+      fastify.log.error({ msg: 'DM leave: failed to set totalday fields', e: numErr.message });
+    }
+
+    try {
+      const userRes = await dataverseRequest(minReq, 'get', 'systemusers', {
+        params: {
+          $select: 'systemuserid,internalemailaddress',
+          $filter: `internalemailaddress eq '${email}'`
+        }
+      });
+
+      const systemUserId = userRes.value?.[0]?.systemuserid;
+      const flowUrl = process.env.POWERAPPS_FLOW_URL;
+      if (flowUrl && leaveId && systemUserId) {
+        await fetch(flowUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ leaveId, userId: systemUserId })
+        });
+      }
+    } catch (flowErr) {
+      fastify.log.error({ msg: 'DM leave: flow trigger failed', e: flowErr.message });
+    }
+
+    return {
+      ok: true,
+      leaveId,
+      leaveTypeName: usage.ecom_name || 'Unknown',
+      startDate,
+      endDate: endDateStr,
+      returnDate: returnDateStr,
+      days,
+      balanceRemaining: currentBalance - days
+    };
+  } catch (e) {
+    fastify.log.error({ msg: 'submitLeaveRequestViaDm failed', e: e.message, email, rawMessage });
+    return { ok: false, message: e.message || 'Gagal mengajukan cuti via DM.' };
+  }
+}
+
 // Verification endpoint (GET) for Facebook/Instagram webhook setup
 fastify.get('/instagram/webhook', async (req, reply) => {
   const verifyToken = req.query['hub.verify_token'];
@@ -1623,6 +1836,7 @@ async function handleInstagramMessage(senderId, messageText) {
 
     // If sensitive actions require mapping/email, prompt user
     if ((
+      intent === 'submit_leave' ||
       intent === 'check_leave_balance' ||
       intent === 'get_profile' ||
       intent === 'get_leave_requests' ||
@@ -1687,6 +1901,16 @@ async function handleInstagramMessage(senderId, messageText) {
           break;
         case 'login':
           responseData = { action: 'login' };
+          break;
+        case 'submit_leave':
+          if (userEmail) {
+            responseData = await submitLeaveRequestViaDm(userEmail, messageText);
+          } else {
+            responseData = {
+              ok: false,
+              message: 'Silakan login dulu sebelum mengajukan cuti.'
+            };
+          }
           break;
         case 'get_leave_types':
           responseData = await getLeaveTypes();
