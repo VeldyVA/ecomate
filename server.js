@@ -1081,6 +1081,8 @@ return reply.code(200).send({ status: 'received' });
 });
 
 async function handleInstagramMessage(senderId, messageText) {
+  let responseText = '⏳ Sedang memproses permintaan Anda...'; // Initial response
+
   try {
     fastify.log.info({ msg: 'handleInstagramMessage started', senderId, messageText });
     fastify.log.info({ msg: 'DEBUG: before getPSIDEmailMapping' });
@@ -1090,16 +1092,22 @@ async function handleInstagramMessage(senderId, messageText) {
     fastify.log.info({ msg: 'DEBUG: after parseIntent', intent, params });
     fastify.log.info({ msg: 'intent parsed', intent, senderId, mapped: !!userEmail });
 
-    // If sensitive actions require mapping/email, prompt user
-    if ((intent === 'check_leave_balance' || intent === 'get_profile' || intent === 'get_leave_requests') && !userEmail) {
-      fastify.log.info({ msg: 'Attempting to send login link message', senderId });
-      await sendInstagramMessage(senderId, 'ℹ️ Untuk akses data, klik link ini untuk login: https://ecomate-phi.vercel.app/login\n\nSetelah login, salin OTP dari browser dan kirim ke sini.', process.env.INSTAGRAM_ACCESS_TOKEN);
-      fastify.log.info({ msg: 'Login link message sent successfully (or attempted)', senderId });
-      return;
+    // User's requested logic for initial responseText update
+    if (!userEmail) {
+      responseText = 'Silakan login dulu...';
+    } else {
+      responseText = 'Data Anda sedang diproses...';
     }
 
+    // --- Start of original logic, now modifying responseText instead of sending directly ---
+
+    // If sensitive actions require mapping/email, prompt user
+    if ((intent === 'check_leave_balance' || intent === 'get_profile' || intent === 'get_leave_requests') && !userEmail) {
+      responseText = 'ℹ️ Untuk akses data, klik link ini untuk login: https://ecomate-phi.vercel.app/login\n\nSetelah login, salin OTP dari browser dan kirim ke sini.';
+      // No return here, will send at the end
+    }
     // If user sends OTP (6 digits)
-    if (messageText.match(/^\d{6}$/)) {
+    else if (messageText.match(/^\d{6}$/)) { // Use else if to prevent multiple branches from executing
       const otp = messageText;
       try {
         const jwt = await kv.get(otp);
@@ -1107,61 +1115,63 @@ async function handleInstagramMessage(senderId, messageText) {
           const decoded = fastify.jwt.verify(jwt);
           const email = decoded.email;
           await setPSIDEmailMapping(senderId, email);
-          await sendInstagramMessage(senderId, `✅ Login berhasil! Email: ${email}\n\nSekarang coba: cek cuti, data, riwayat`, process.env.INSTAGRAM_ACCESS_TOKEN);
-          return;
+          responseText = `✅ Login berhasil! Email: ${email}\n\nSekarang coba: cek cuti, data, riwayat`;
         } else {
-          await sendInstagramMessage(senderId, '❌ OTP tidak valid atau sudah expired. Coba login lagi.', process.env.INSTAGRAM_ACCESS_TOKEN);
-          return;
+          responseText = '❌ OTP tidak valid atau sudah expired. Coba login lagi.';
         }
       } catch (e) {
         fastify.log.error({ msg: 'OTP validation failed', e: e.message });
-        await sendInstagramMessage(senderId, '❌ Terjadi kesalahan saat validasi OTP.', process.env.INSTAGRAM_ACCESS_TOKEN);
-        return;
+        responseText = '❌ Terjadi kesalahan saat validasi OTP.';
       }
     }
-
     // If user sends an email to map (fallback, but now prefer OTP)
-    if (intent === 'unknown' && messageText.includes('@') && messageText.includes('.')) {
+    else if (intent === 'unknown' && messageText.includes('@') && messageText.includes('.')) { // Use else if
       const potentialEmail = messageText.trim();
       try {
         const minReq = { headers: {}, session: { accessToken: await getAppLevelDataverseToken() } };
         const res = await dataverseRequest(minReq, 'get', 'ecom_personalinformations', { params: { $filter: `ecom_workemail eq '${potentialEmail}'`, $select: 'ecom_personalinformationid,ecom_employeename' } });
         if (res.value && res.value.length) {
           await setPSIDEmailMapping(senderId, potentialEmail);
-          await sendInstagramMessage(senderId, `✅ Email terverifikasi: ${potentialEmail}\n\nSekarang coba: cek cuti, data, riwayat`, process.env.INSTAGRAM_ACCESS_TOKEN);
-          return;
+          responseText = `✅ Email terverifikasi: ${potentialEmail}\n\nSekarang coba: cek cuti, data, riwayat`;
+        } else {
+          responseText = '❌ Email tidak ditemukan di sistem. Pastikan email kerja Anda.';
         }
-      } catch (e) { fastify.log.error({ msg: 'validate email failed', e: e.message }); }
-      await sendInstagramMessage(senderId, '❌ Email tidak ditemukan di sistem. Pastikan email kerja Anda.', process.env.INSTAGRAM_ACCESS_TOKEN);
-      return;
+      } catch (e) {
+        fastify.log.error({ msg: 'validate email failed', e: e.message });
+        responseText = '❌ Email tidak ditemukan di sistem. Pastikan email kerja Anda.'; // Fallback for error
+      }
+    }
+    // Handle other intents
+    else {
+      let responseData = {};
+      switch (intent) {
+        case 'login':
+          responseData = { action: 'login' };
+          break;
+        case 'check_leave_balance':
+          if (userEmail) responseData = await getLeaveBalance(userEmail);
+          break;
+        case 'get_profile':
+          if (userEmail) responseData = await getProfile(userEmail);
+          break;
+        case 'get_leave_requests':
+          if (userEmail) responseData = await getLeaveRequests(userEmail);
+          break;
+        default:
+          responseData = { action: 'unknown' };
+      }
+      responseText = formatInstagramResponse(responseData, intent);
     }
 
-    let responseData = {};
-    switch (intent) {
-      case 'login':
-        responseData = { action: 'login' };
-        break;
-      case 'check_leave_balance':
-        if (userEmail) responseData = await getLeaveBalance(userEmail);
-        break;
-      case 'get_profile':
-        if (userEmail) responseData = await getProfile(userEmail);
-        break;
-      case 'get_leave_requests':
-        if (userEmail) responseData = await getLeaveRequests(userEmail);
-        break;
-      default:
-        responseData = { action: 'unknown' };
-    }
-
-    const text = formatInstagramResponse(responseData, intent);
-    await sendInstagramMessage(senderId, text, process.env.INSTAGRAM_ACCESS_TOKEN);
-    fastify.log.info({ msg: 'instagram reply sent', senderId, intent });
+    fastify.log.info({ msg: 'instagram reply prepared', senderId, intent });
 
   } catch (e) {
     fastify.log.error({ msg: 'handleInstagramMessage unexpected', e: e.message });
-    try { await sendInstagramMessage(senderId, '❌ Terjadi kesalahan. Silakan coba lagi nanti.', process.env.INSTAGRAM_ACCESS_TOKEN); } catch (er) { fastify.log.error({ msg: 'failed to send error message', er: er.message }); }
+    responseText = '❌ Terjadi error internal.';
   }
+
+  // Send the final responseText
+  await sendInstagramMessage(senderId, responseText, process.env.INSTAGRAM_ACCESS_TOKEN);
 }
 
 const EmojiMap = { login: '🔐', check_leave_balance: '📅', get_profile: '👤', get_leave_requests: '📋' };
