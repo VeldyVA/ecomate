@@ -1027,7 +1027,7 @@ fastify.post('/instagram/webhook', async (req, reply) => {
               messageText
             });
 
-            handleInstagramMessage(senderId, messageText)
+            await handleInstagramMessage(senderId, messageText)
               .catch(err => fastify.log.error({
                 msg: 'handleInstagramMessage failed',
                 err: err.message
@@ -1056,7 +1056,7 @@ fastify.post('/instagram/webhook', async (req, reply) => {
         messageText
       });
 
-      handleInstagramMessage(senderId, messageText)
+      await handleInstagramMessage(senderId, messageText)
         .catch(err => fastify.log.error({
           msg: 'handleInstagramMessage failed',
           err: err.message
@@ -1170,6 +1170,7 @@ async function handleInstagramMessage(senderId, messageText) {
     responseText = '❌ Terjadi error internal.';
   }
 
+  fastify.log.info({ msg: 'Final Instagram message prepared', senderId, responseText: responseText.substring(0, 50) + '...' });
   // Send the final responseText
   await sendInstagramMessage(senderId, responseText, process.env.INSTAGRAM_ACCESS_TOKEN);
 }
