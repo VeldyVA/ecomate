@@ -991,6 +991,11 @@ function formatInstagramResponse(data, intent) {
         '- development',
         '- peer review',
         '',
+        'ℹ️ Keterangan cuti:',
+        '- Cuti reguler: lewat endpoint /leave/requests (berbasis saldo periode).',
+        '- Cuti khusus: lewat endpoint /leave/requests/special.',
+        '  Dipakai untuk tipe khusus berbasis kuota/aturan (termasuk Cuti Panjang).',
+        '',
         '🔒 Perintah admin (butuh role admin/co_admin):',
         '- admin profile email <email>',
         '- admin saldo email <email>',
@@ -1008,8 +1013,13 @@ function formatInstagramResponse(data, intent) {
         response = '🗂️ Jenis Cuti Aktif:\n';
         data.leaveTypes.slice(0, 10).forEach(t => {
           const quota = t.ecom_quota == null ? '-' : t.ecom_quota;
-          response += `- ${t.ecom_name} (kuota: ${quota})\n`;
+          const name = String(t.ecom_name || '').toLowerCase();
+          const routeHint = name.startsWith('cuti panjang') ? 'khusus' : 'reguler/khusus (tergantung rule)';
+          response += `- ${t.ecom_name} (kuota: ${quota}, jalur: ${routeHint})\n`;
         });
+        response += '\nℹ️ Pembeda jalur:';
+        response += '\n- /leave/requests: untuk cuti reguler berbasis saldo periode.';
+        response += '\n- /leave/requests/special: untuk cuti khusus berbasis kuota/aturan khusus (termasuk Cuti Panjang).';
       } else {
         response = '❌ Data jenis cuti tidak ditemukan.';
       }
