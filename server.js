@@ -963,6 +963,18 @@ async function sendInstagramMessage(recipientId, messageText, accessToken) {
 }
 
 function formatInstagramResponse(data, intent) {
+  const normalizeDateText = (input) => {
+    let text = String(input || '');
+
+    // Convert ISO datetime like 2026-07-02T00:00:00Z -> 02-07-2026
+    text = text.replace(/\b(\d{4})-(\d{2})-(\d{2})T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/g, (_, y, m, d) => `${d}-${m}-${y}`);
+
+    // Convert plain date like 2026-07-02 -> 02-07-2026
+    text = text.replace(/\b(\d{4})-(\d{2})-(\d{2})\b/g, (_, y, m, d) => `${d}-${m}-${y}`);
+
+    return text;
+  };
+
   let response = '';
   switch (intent) {
     case 'help':
@@ -1141,6 +1153,7 @@ function formatInstagramResponse(data, intent) {
     default:
       response = '❓ Perintah tidak dipahami. Ketik bantuan untuk lihat daftar perintah.';
   }
+  response = normalizeDateText(response);
   const maxResponseLength = (intent === 'get_profile' || intent === 'admin_query') ? 1800 : 900;
   if (response.length > maxResponseLength) response = response.substring(0, maxResponseLength - 3) + '...';
   return response;
