@@ -850,17 +850,21 @@ fastify.patch("/profile/:employeeId", { preValidation: [fastify.authenticate] },
 // Inserted by Copilot: handles verification, intent parsing, dataverse calls via existing helpers
 // ==============================
 
-function verifyInstagramSignature(rawBody, headers, appSecret) {
+function verifyInstagramSignature(rawBody, headers, appSecrets) {
   try {
     const bodyBuf = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(rawBody || '', 'utf8');
+    const secrets = Array.isArray(appSecrets) ? appSecrets.filter(Boolean) : [];
+    if (!secrets.length) return false;
 
     // Try SHA1 (x-hub-signature)
     const sig1 = headers['x-hub-signature'];
     if (sig1) {
       const parts = sig1.split('=');
       if (parts.length === 2 && parts[0] === 'sha1') {
-        const expected = crypto.createHmac('sha1', appSecret).update(bodyBuf).digest('hex');
-        if (expected === parts[1]) return true;
+        for (const secret of secrets) {
+          const expected = crypto.createHmac('sha1', secret).update(bodyBuf).digest('hex');
+          if (expected === parts[1]) return true;
+        }
       }
     }
 
@@ -869,8 +873,10 @@ function verifyInstagramSignature(rawBody, headers, appSecret) {
     if (sig256) {
       const parts = sig256.split('=');
       if (parts.length === 2 && parts[0] === 'sha256') {
-        const expected = crypto.createHmac('sha256', appSecret).update(bodyBuf).digest('hex');
-        if (expected === parts[1]) return true;
+        for (const secret of secrets) {
+          const expected = crypto.createHmac('sha256', secret).update(bodyBuf).digest('hex');
+          if (expected === parts[1]) return true;
+        }
       }
     }
 
@@ -1063,15 +1069,16 @@ fastify.post('/instagram/webhook', async (req, reply) => {
   const hasSig256 = !!req.headers['x-hub-signature-256'];
   fastify.log.info({ msg: 'instagram webhook post', hasSig1, hasSig256 });
   try {
-    const appSecret = process.env.INSTAGRAM_APP_SECRET;
-    if (!appSecret) return reply.code(400).send({ error: 'Missing app secret config' });
+    const appSecretsRaw = process.env.INSTAGRAM_APP_SECRETS || process.env.INSTAGRAM_APP_SECRET || '';
+    const appSecrets = appSecretsRaw.split(',').map(s => s.trim()).filter(Boolean);
+    if (!appSecrets.length) return reply.code(400).send({ error: 'Missing app secret config' });
     if (!hasSig1 && !hasSig256) return reply.code(400).send({ error: 'Missing signature header' });
 
     // Use raw Buffer captured during content-type parsing for exact HMAC match
     const rawBody = rawBodyStore.get(req.id) || Buffer.from(JSON.stringify(req.body || {}));
-    fastify.log.info({ msg: 'ig webhook signature check', rawBodyLen: rawBody.length, hasSig1, hasSig256 });
+    fastify.log.info({ msg: 'ig webhook signature check', rawBodyLen: rawBody.length, hasSig1, hasSig256, secretsCount: appSecrets.length });
 
-    if (!verifyInstagramSignature(rawBody, req.headers, appSecret)) {
+    if (!verifyInstagramSignature(rawBody, req.headers, appSecrets)) {
       fastify.log.error({ msg: 'Instagram signature verification failed', sig1: req.headers['x-hub-signature'], sig256: req.headers['x-hub-signature-256'] });
       return reply.code(401).send({ error: 'Signature verification failed' });
     }
