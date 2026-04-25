@@ -964,16 +964,19 @@ async function forwardToPusaka(senderId, messageText) {
 
   try {
     const payloadString = JSON.stringify(payload);
-    const signature = pusakaSecret
-      ? `sha256=${crypto.createHmac('sha256', pusakaSecret).update(payloadString).digest('hex')}`
-      : '';
+    const extraHeaders = {};
+    if (pusakaSecret) {
+      // Send both SHA1 and SHA256 — Pusaka may expect either format
+      extraHeaders['X-Hub-Signature'] = `sha1=${crypto.createHmac('sha1', pusakaSecret).update(payloadString).digest('hex')}`;
+      extraHeaders['X-Hub-Signature-256'] = `sha256=${crypto.createHmac('sha256', pusakaSecret).update(payloadString).digest('hex')}`;
+    }
 
     fastify.log.info({ msg: 'Forwarding Instagram DM to Pusaka', senderId, messagePreview: String(messageText || '').substring(0, 80) });
 
     const res = await axios.post(pusakaWebhookUrl, payload, {
       headers: {
         'Content-Type': 'application/json',
-        ...(signature && { 'X-Hub-Signature-256': signature }),
+        ...extraHeaders,
         'X-Instagram-PSID': String(senderId),
         'X-Reply-Url': callbackUrl
       },
@@ -996,8 +999,8 @@ async function forwardToPusaka(senderId, messageText) {
       status: err.response?.status,
       data: err.response?.data
     });
-    await sendInstagramMessage(senderId, '⏳ Pesan Anda sedang diproses. Mohon tunggu sebentar.', process.env.INSTAGRAM_ACCESS_TOKEN)
-      .catch(() => {});
+    // NOTE: Do NOT send any fallback message here — Instagram would echo it back
+    // as a new webhook event, creating an infinite loop.
   }
 }
 
@@ -1037,6 +1040,8 @@ fastify.post('/instagram/webhook', async (req, reply) => {
     }
     fastify.log.info({ msg: 'Instagram payload parsed', entryCount: entry.length });
 
+    const ownAccountId = process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID;
+
     for (const evt of entry) {
 
   // ✅ INSTAGRAM (changes format)
@@ -1051,6 +1056,12 @@ fastify.post('/instagram/webhook', async (req, reply) => {
           for (const msg of messages) {
             const senderId = msg.from?.id;
             const messageText = msg.text || '[non-text message]';
+
+            // Skip echo: messages sent by our own bot account
+            if (ownAccountId && String(senderId) === String(ownAccountId)) {
+              fastify.log.info({ msg: 'Skipping echo from own account', senderId });
+              continue;
+            }
 
             if (!senderId) continue;
 
@@ -1082,6 +1093,12 @@ fastify.post('/instagram/webhook', async (req, reply) => {
       const messageText = msg.message?.text || '[non-text message]';
 
       if (!senderId) continue;
+
+      // Skip echo: messages sent by our own bot account
+      if (ownAccountId && String(senderId) === String(ownAccountId)) {
+        fastify.log.info({ msg: 'Skipping echo from own account', senderId });
+        continue;
+      }
 
       fastify.log.info({
         msg: 'Messenger message received',
