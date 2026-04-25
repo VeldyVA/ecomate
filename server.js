@@ -883,16 +883,26 @@ function parseAdminCommand(messageText) {
   const raw = (messageText || '').trim();
   const text = raw.toLowerCase();
 
-  const withCriteria = /^admin\s+(profile|saldo|position|developments?|review|peer\s*review)\s+(email|id|name)\s+(.+)$/i.exec(raw);
+  const withCriteria = /^admin\s+(profile|saldo|position|developments?|review|peer\s*review)\s+(.+)$/i.exec(raw);
   if (withCriteria) {
     const action = withCriteria[1].toLowerCase().replace(/\s+/g, '_');
-    const by = withCriteria[2].toLowerCase();
-    const value = (withCriteria[3] || '').trim();
-    return { action, by, value };
+    const value = (withCriteria[2] || '').trim();
+    return { action, by: 'name', value };
   }
 
-  if (text.startsWith('admin cuti') || text.startsWith('admin leave')) {
-    return { action: 'leave_requests' };
+  const leaveCmd = /^admin\s+(cuti|leave)(?:\s+(.+))?$/i.exec(raw);
+  if (leaveCmd) {
+    const arg = (leaveCmd[2] || '').trim();
+    if (!arg) return { action: 'leave_requests' };
+
+    const periodMatch = arg.match(/\b(20\d{2}(?:-\d{2})?)\b/);
+    const period = periodMatch ? periodMatch[1] : null;
+    let name = arg;
+    if (period) name = name.replace(period, ' ');
+    name = name.replace(/\b(period|periode|tahun|month|bulan)\b/gi, ' ').replace(/\s+/g, ' ').trim();
+    if (!name || /^(all|semua)$/i.test(name)) name = null;
+
+    return { action: 'leave_requests', name, period };
   }
 
   return { action: 'unknown', raw };
@@ -989,22 +999,21 @@ function formatInstagramResponse(data, intent) {
         '- ajukan cuti khusus <tanggal> (contoh: ajukan cuti khusus 27 april 2026)',
         '- pilih cuti <nomor> <jumlah_hari> <alasan(optional)>',
         '- pilih cuti khusus <nomor> <jumlah_hari> <alasan(optional)>',
-        '- riwayat',
-        '- development',
+        '- riwayat (untuk mencari riwayat cuti)',
+        '- development (untuk mencari riwayat project yang pernah diikuti)',
         '- peer review',
         '',
         'ℹ️ Keterangan cuti:',
-        '- Cuti reguler: lewat endpoint /leave/requests (berbasis saldo periode).',
-        '- Cuti khusus: lewat endpoint /leave/requests/special.',
-        '  Dipakai untuk tipe khusus berbasis kuota/aturan (termasuk Cuti Panjang).',
+        '- Cuti reguler: berbasis saldo periode.',
+        '- Cuti khusus: dipakai untuk tipe khusus berbasis aturan (dengan kuota atau tidak), termasuk cuti panjang.',
         '',
         '🔒 Perintah admin (butuh role admin/co_admin):',
-        '- admin profile email <email>',
-        '- admin saldo email <email>',
-        '- admin position email <email>',
-        '- admin development email <email>',
-        '- admin review email <email>',
-        '- admin cuti'
+        '- admin profile <nama>',
+        '- admin saldo <nama>',
+        '- admin position <nama>',
+        '- admin development <nama>',
+        '- admin review <nama>',
+        '- admin cuti [nama] [periode: YYYY atau YYYY-MM]'
       ].join('\n');
       break;
     case 'login':
@@ -1350,8 +1359,8 @@ async function handleAdminQuery(userMapping, params) {
 
   try {
     if (action === 'profile') {
-      if (!by || !value) return { adminText: 'Gunakan: admin profile email|id|name <nilai>' };
-      const employeeId = await resolveEmployeeIdForAdmin(minReq, by, value);
+      if (!value) return { adminText: 'Gunakan: admin profile <nama>' };
+      const employeeId = await resolveEmployeeIdForAdmin(minReq, 'name', value);
       if (!employeeId) return { adminText: '❌ Karyawan tidak ditemukan.' };
 
       const profileRes = await dataverseRequest(minReq, 'get', 'ecom_personalinformations', {
@@ -1421,8 +1430,8 @@ async function handleAdminQuery(userMapping, params) {
     }
 
     if (action === 'saldo') {
-      if (!by || !value) return { adminText: 'Gunakan: admin saldo email|id|name <nilai>' };
-      const employeeId = await resolveEmployeeIdForAdmin(minReq, by, value);
+      if (!value) return { adminText: 'Gunakan: admin saldo <nama>' };
+      const employeeId = await resolveEmployeeIdForAdmin(minReq, 'name', value);
       if (!employeeId) return { adminText: '❌ Karyawan tidak ditemukan.' };
 
       const period = String(new Date().getFullYear());
@@ -1438,8 +1447,8 @@ async function handleAdminQuery(userMapping, params) {
     }
 
     if (action === 'position') {
-      if (!by || !value) return { adminText: 'Gunakan: admin position email|id|name <nilai>' };
-      const employeeId = await resolveEmployeeIdForAdmin(minReq, by, value);
+      if (!value) return { adminText: 'Gunakan: admin position <nama>' };
+      const employeeId = await resolveEmployeeIdForAdmin(minReq, 'name', value);
       if (!employeeId) return { adminText: '❌ Karyawan tidak ditemukan.' };
 
       const positionData = await dataverseRequest(minReq, 'get', 'ecom_employeepositions', {
@@ -1459,8 +1468,8 @@ async function handleAdminQuery(userMapping, params) {
     }
 
     if (action === 'development' || action === 'developments') {
-      if (!by || !value) return { adminText: 'Gunakan: admin development email|id|name <nilai>' };
-      const employeeId = await resolveEmployeeIdForAdmin(minReq, by, value);
+      if (!value) return { adminText: 'Gunakan: admin development <nama>' };
+      const employeeId = await resolveEmployeeIdForAdmin(minReq, 'name', value);
       if (!employeeId) return { adminText: '❌ Karyawan tidak ditemukan.' };
 
       const historyData = await dataverseRequest(minReq, 'get', 'ecom_developments', {
@@ -1477,23 +1486,17 @@ async function handleAdminQuery(userMapping, params) {
     }
 
     if (action === 'review' || action === 'peer_review') {
-      if (!by || !value) return { adminText: 'Gunakan: admin review email|id|name <nilai>' };
+      if (!value) return { adminText: 'Gunakan: admin review <nama>' };
 
       let userIdToSearch = null;
-      if (by === 'id') {
-        userIdToSearch = value;
-      } else {
-        const userFilter = by === 'email'
-          ? `internalemailaddress eq '${value}'`
-          : `contains(fullname, '${value}')`;
-        const userRes = await dataverseRequest(minReq, 'get', 'systemusers', {
-          params: {
-            $filter: userFilter,
-            $select: 'systemuserid'
-          }
-        });
-        userIdToSearch = userRes.value?.[0]?.systemuserid || null;
-      }
+      const userFilter = `contains(fullname, '${value}')`;
+      const userRes = await dataverseRequest(minReq, 'get', 'systemusers', {
+        params: {
+          $filter: userFilter,
+          $select: 'systemuserid'
+        }
+      });
+      userIdToSearch = userRes.value?.[0]?.systemuserid || null;
 
       if (!userIdToSearch) return { adminText: '❌ User system tidak ditemukan.' };
 
@@ -1511,14 +1514,38 @@ async function handleAdminQuery(userMapping, params) {
     }
 
     if (action === 'leave_requests') {
-      const list = await dataverseRequest(minReq, 'get', 'ecom_employeeleaves', {
-        params: {
-          $select: 'ecom_name,ecom_startdate,ecom_enddate,ecom_leavestatus,createdon',
-          $expand: 'ecom_Employee($select=ecom_employeename),ecom_LeaveType($select=ecom_name)',
-          $orderby: 'createdon desc',
-          $top: 10
+      const filters = [];
+
+      if (params?.name) {
+        const employeeId = await resolveEmployeeIdForAdmin(minReq, 'name', params.name);
+        if (!employeeId) return { adminText: '❌ Karyawan tidak ditemukan untuk pencarian cuti.' };
+        filters.push(`_ecom_employee_value eq ${employeeId}`);
+      }
+
+      if (params?.period) {
+        const p = String(params.period).trim();
+        if (/^20\d{2}$/.test(p)) {
+          filters.push(`ecom_enddate ge ${p}-01-01`);
+          filters.push(`ecom_startdate le ${p}-12-31`);
+        } else if (/^20\d{2}-\d{2}$/.test(p)) {
+          const [yy, mm] = p.split('-').map(Number);
+          const last = new Date(yy, mm, 0).getDate();
+          const start = `${yy}-${String(mm).padStart(2, '0')}-01`;
+          const end = `${yy}-${String(mm).padStart(2, '0')}-${String(last).padStart(2, '0')}`;
+          filters.push(`ecom_enddate ge ${start}`);
+          filters.push(`ecom_startdate le ${end}`);
         }
-      });
+      }
+
+      const query = {
+        $select: 'ecom_name,ecom_startdate,ecom_enddate,ecom_leavestatus,createdon',
+        $expand: 'ecom_Employee($select=ecom_employeename),ecom_LeaveType($select=ecom_name)',
+        $orderby: 'createdon desc',
+        $top: 10
+      };
+      if (filters.length) query.$filter = filters.join(' and ');
+
+      const list = await dataverseRequest(minReq, 'get', 'ecom_employeeleaves', { params: query });
       const rows = list.value || [];
       if (!rows.length) return { adminText: '✅ Tidak ada data cuti.' };
       return {
