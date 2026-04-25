@@ -1126,18 +1126,8 @@ fastify.post('/instagram/webhook', async (req, reply) => {
       return reply.code(200).send({ status: 'ignored_unsigned_payload' });
     }
 
-    const appSecretsFromList = (process.env.INSTAGRAM_APP_SECRETS || '')
-      .split(',')
-      .map(s => s.trim())
-      .filter(Boolean);
-
-    // Support secret rotation / mixed Meta app deliveries.
-    const appSecrets = Array.from(new Set([
-      process.env.INSTAGRAM_APP_SECRET,
-      process.env.INSTAGRAM_APP_SECRET_OLD,
-      process.env.INSTAGRAM_APP_SECRET_PREVIOUS,
-      ...appSecretsFromList
-    ].map(s => (s || '').trim()).filter(Boolean)));
+    const appSecretsRaw = process.env.INSTAGRAM_APP_SECRETS || process.env.INSTAGRAM_APP_SECRET || '';
+    const appSecrets = appSecretsRaw.split(',').map(s => s.trim()).filter(Boolean);
     if (!appSecrets.length) return reply.code(400).send({ error: 'Missing app secret config' });
 
     // Use raw Buffer captured during content-type parsing for exact HMAC match
