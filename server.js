@@ -45,9 +45,12 @@ fastify.register(fastifyCors, {
   allowedHeaders: ['Content-Type', 'Authorization']
 });
 
+// Raw body store keyed by request id (survives Vercel serverless restrictions)
+const rawBodyStore = new Map();
+
 // Custom JSON parser to allow empty body for PATCH requests
-fastify.addContentTypeParser('application/json', { parseAs: 'string' }, function (req, body, done) {
-  if (!body || body.trim() === '') {
+fastify.addContentTypeParser('application/json', { parseAs: 'buffer' }, function (req, body, done) {
+  if (!body || body.length === 0) {
     if (req.method === 'PATCH' || (req.method === 'POST' && req.url.includes('/cancel'))) {
       return done(null, {});
     }
@@ -56,15 +59,22 @@ fastify.addContentTypeParser('application/json', { parseAs: 'string' }, function
     return done(err, undefined);
   }
   try {
-    // Preserve raw body string for webhook signature verification
-    try { req.rawBody = body; } catch (e) { /* ignore if unable to set */ }
-    const json = JSON.parse(body);
+    // Store raw Buffer for HMAC verification; keyed by id so it always works
+    rawBodyStore.set(req.id, body);
+    const json = JSON.parse(body.toString('utf8'));
     done(null, json);
   } catch (e) {
+    rawBodyStore.delete(req.id);
     const err = new Error('Invalid JSON: ' + e.message);
     err.statusCode = 400;
     done(err, undefined);
   }
+});
+
+// Clean up rawBodyStore after each request
+fastify.addHook('onSend', (req, reply, payload, done) => {
+  rawBodyStore.delete(req.id);
+  done();
 });
 
 // Workaround for clients that do not send Content-Type
@@ -840,12 +850,31 @@ fastify.patch("/profile/:employeeId", { preValidation: [fastify.authenticate] },
 // Inserted by Copilot: handles verification, intent parsing, dataverse calls via existing helpers
 // ==============================
 
-function verifyInstagramSignature(payload, signature, appSecret) {
-  if (!signature) return false;
+function verifyInstagramSignature(rawBody, headers, appSecret) {
   try {
-    const expected = crypto.createHmac('sha1', appSecret).update(payload, 'utf8').digest('hex');
-    const parts = signature.split('=');
-    return parts.length === 2 && parts[0] === 'sha1' && parts[1] === expected;
+    const bodyBuf = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(rawBody || '', 'utf8');
+
+    // Try SHA1 (x-hub-signature)
+    const sig1 = headers['x-hub-signature'];
+    if (sig1) {
+      const parts = sig1.split('=');
+      if (parts.length === 2 && parts[0] === 'sha1') {
+        const expected = crypto.createHmac('sha1', appSecret).update(bodyBuf).digest('hex');
+        if (expected === parts[1]) return true;
+      }
+    }
+
+    // Try SHA256 (x-hub-signature-256)
+    const sig256 = headers['x-hub-signature-256'];
+    if (sig256) {
+      const parts = sig256.split('=');
+      if (parts.length === 2 && parts[0] === 'sha256') {
+        const expected = crypto.createHmac('sha256', appSecret).update(bodyBuf).digest('hex');
+        if (expected === parts[1]) return true;
+      }
+    }
+
+    return false;
   } catch (e) {
     fastify.log.error({ msg: 'verifyInstagramSignature failed', error: e.message });
     return false;
@@ -1027,15 +1056,20 @@ fastify.get('/instagram/webhook', async (req, reply) => {
 
 // Message receiver (POST)
 fastify.post('/instagram/webhook', async (req, reply) => {
-  fastify.log.info({ msg: 'instagram webhook post', hasSignature: !!req.headers['x-hub-signature'] });
+  const hasSig1 = !!req.headers['x-hub-signature'];
+  const hasSig256 = !!req.headers['x-hub-signature-256'];
+  fastify.log.info({ msg: 'instagram webhook post', hasSig1, hasSig256 });
   try {
-    const signature = req.headers['x-hub-signature'];
     const appSecret = process.env.INSTAGRAM_APP_SECRET;
-    if (!signature || !appSecret) return reply.code(400).send({ error: 'Missing signature or secret' });
-    // Use the raw body (preserved by our content-type parser) for HMAC verification
-    const payload = req.rawBody || JSON.stringify(req.body || {});
-    if (!verifyInstagramSignature(payload, signature, appSecret)) {
-      fastify.log.error({ msg: 'Instagram signature verification failed' });
+    if (!appSecret) return reply.code(400).send({ error: 'Missing app secret config' });
+    if (!hasSig1 && !hasSig256) return reply.code(400).send({ error: 'Missing signature header' });
+
+    // Use raw Buffer captured during content-type parsing for exact HMAC match
+    const rawBody = rawBodyStore.get(req.id) || Buffer.from(JSON.stringify(req.body || {}));
+    fastify.log.info({ msg: 'ig webhook signature check', rawBodyLen: rawBody.length, hasSig1, hasSig256 });
+
+    if (!verifyInstagramSignature(rawBody, req.headers, appSecret)) {
+      fastify.log.error({ msg: 'Instagram signature verification failed', sig1: req.headers['x-hub-signature'], sig256: req.headers['x-hub-signature-256'] });
       return reply.code(401).send({ error: 'Signature verification failed' });
     }
     fastify.log.info({ msg: 'Instagram signature verified successfully' });
