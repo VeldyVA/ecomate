@@ -47,6 +47,27 @@ fastify.register(fastifyCors, {
 
 // Raw body store keyed by request id (survives Vercel serverless restrictions)
 const rawBodyStore = new Map();
+const pendingPusakaBySender = new Map();
+const PUSAKA_PENDING_TTL_MS = 2 * 60 * 1000;
+
+function markPusakaPending(senderId, messageId) {
+  pendingPusakaBySender.set(String(senderId), { messageId, ts: Date.now() });
+}
+
+function getPusakaPending(senderId) {
+  const key = String(senderId);
+  const data = pendingPusakaBySender.get(key);
+  if (!data) return null;
+  if (Date.now() - data.ts > PUSAKA_PENDING_TTL_MS) {
+    pendingPusakaBySender.delete(key);
+    return null;
+  }
+  return data;
+}
+
+function clearPusakaPending(senderId) {
+  pendingPusakaBySender.delete(String(senderId));
+}
 
 // Custom JSON parser to allow empty body for PATCH requests
 fastify.addContentTypeParser('application/json', { parseAs: 'buffer' }, function (req, body, done) {
@@ -1017,6 +1038,7 @@ async function forwardToPusaka(senderId, messageText) {
     }
 
     fastify.log.info({ msg: 'Forwarding Instagram DM to Pusaka', senderId, messagePreview: String(messageText || '').substring(0, 80) });
+    markPusakaPending(senderId, messageId);
 
     // Send the raw buffer so the body bytes match what was signed
     const res = await axios.post(pusakaWebhookUrl, bodyBuffer, {
@@ -1036,6 +1058,7 @@ async function forwardToPusaka(senderId, messageText) {
     const replyText = res.data?.reply || res.data?.message || res.data?.text || res.data?.response;
     if (replyText && typeof replyText === 'string' && replyText.trim()) {
       await sendInstagramMessage(senderId, replyText.trim(), process.env.INSTAGRAM_ACCESS_TOKEN);
+      clearPusakaPending(senderId);
     }
     // Otherwise: Pusaka will POST async reply to /pusaka/reply
 
@@ -1076,12 +1099,25 @@ fastify.post('/instagram/webhook', async (req, reply) => {
     if (!hasSig1 && !hasSig256) {
       const body = req.body || {};
       const senderId = body.psid || body.instagram_psid || body.senderId || body.sender_id;
-      const messageText = body.text || body.message || body.reply || body.response;
+      const messageTextRaw = body.text || body.message || body.reply || body.response;
+      const messageText = typeof messageTextRaw === 'string' ? messageTextRaw.trim() : '';
+
+      if (senderId && !messageText) {
+        const pending = getPusakaPending(senderId);
+        fastify.log.info({
+          msg: 'premature unsigned callback on /instagram/webhook (empty message), acknowledged',
+          senderId,
+          pending: !!pending,
+          pendingAgeMs: pending ? (Date.now() - pending.ts) : null
+        });
+        return reply.code(200).send({ status: 'ack_premature_unsigned_callback' });
+      }
 
       if (senderId && messageText) {
         fastify.log.info({ msg: 'unsigned callback received on /instagram/webhook; relaying to Instagram', senderId });
         await sendInstagramMessage(String(senderId), String(messageText), process.env.INSTAGRAM_ACCESS_TOKEN)
           .catch(err => fastify.log.error({ msg: 'unsigned callback relay failed', error: err.message }));
+        clearPusakaPending(senderId);
         return reply.code(200).send({ status: 'relayed_unsigned_callback' });
       }
 
@@ -1207,17 +1243,35 @@ return reply.code(200).send({ status: 'received' });
 fastify.post('/pusaka/reply', async (req, reply) => {
   const body = req.body || {};
   const senderId = body.psid || body.instagram_psid || req.headers['x-instagram-psid'];
-  const messageText = body.text || body.message || body.reply || body.response;
+  const messageTextRaw = body.text || body.message || body.reply || body.response;
+  const messageText = typeof messageTextRaw === 'string' ? messageTextRaw.trim() : '';
+
+  if (!senderId && !messageText) {
+    fastify.log.warn({ msg: 'pusaka/reply: empty payload acknowledged', keys: Object.keys(body || {}) });
+    return reply.code(200).send({ status: 'ack_empty_payload' });
+  }
+
+  if (senderId && !messageText) {
+    const pending = getPusakaPending(senderId);
+    fastify.log.info({
+      msg: 'pusaka/reply: premature callback (no text) acknowledged',
+      senderId,
+      pending: !!pending,
+      pendingAgeMs: pending ? (Date.now() - pending.ts) : null
+    });
+    return reply.code(200).send({ status: 'ack_premature_no_text' });
+  }
 
   if (!senderId || !messageText) {
     fastify.log.warn({ msg: 'pusaka/reply: missing psid or text', body });
-    return reply.code(400).send({ error: 'psid (or instagram_psid) and text are required' });
+    return reply.code(200).send({ status: 'ack_invalid_payload' });
   }
 
   fastify.log.info({ msg: 'pusaka/reply: relaying AI response to Instagram', senderId, messagePreview: String(messageText).substring(0, 80) });
 
   await sendInstagramMessage(String(senderId), String(messageText), process.env.INSTAGRAM_ACCESS_TOKEN)
     .catch(err => fastify.log.error({ msg: 'pusaka/reply: sendInstagramMessage failed', error: err.message }));
+  clearPusakaPending(senderId);
 
   return reply.code(200).send({ status: 'sent' });
 });
