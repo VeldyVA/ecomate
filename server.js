@@ -852,6 +852,11 @@ function verifyInstagramSignature(payload, signature, appSecret) {
   }
 }
 
+function extractPeriodFromText(text) {
+  const m = String(text || '').match(/\b(20\d{2})\b/);
+  return m ? m[1] : null;
+}
+
 function parseIntent(messageText) {
   const text = (messageText || '').toLowerCase().trim();
   if (!text) return { intent: 'unknown', params: {} };
@@ -862,7 +867,9 @@ function parseIntent(messageText) {
   if (text === 'help' || text === 'bantuan' || text === 'menu') return { intent: 'help', params: {} };
   if (text.includes('login') || text.includes('masuk')) return { intent: 'login', params: {} };
   if (text.includes('jenis cuti') || text.includes('tipe cuti') || text.includes('leave type')) return { intent: 'get_leave_types', params: {} };
-  if (text.includes('cek cuti') || text.includes('saldo') || text.includes('cuti berapa')) return { intent: 'check_leave_balance', params: { period: new Date().getFullYear().toString() } };
+  if (text.includes('cek cuti') || text.includes('saldo') || text.includes('cuti berapa')) {
+    return { intent: 'check_leave_balance', params: { period: extractPeriodFromText(text) } };
+  }
   if (text.includes('ajukan') || text.includes('apply') || text.includes('request')) return { intent: 'submit_leave', params: { raw_message: messageText } };
   if (text.includes('data') || text.includes('profil') || text.includes('info')) return { intent: 'get_profile', params: {} };
   if (text.includes('posisi') || text.includes('jabatan') || text.includes('grade')) return { intent: 'get_position', params: {} };
@@ -996,10 +1003,30 @@ function formatInstagramResponse(data, intent) {
       }
       break;
     case 'check_leave_balance':
-      if (data.balances && data.balances.length) {
-        response = '📅 Saldo Cuti Anda:\n';
-        data.balances.forEach(b => { response += `${b.leave_type_name || b.ecom_name}: ${b.balance || b.ecom_balance} hari\n`; });
-      } else response = '❌ Tidak ada data saldo cuti untuk tahun ini.';
+      if (data.action === 'select_period') {
+        const periods = data.periods || [];
+        if (!periods.length) {
+          response = '❌ Tidak ada data periode saldo cuti yang tersedia.';
+        } else {
+          response = [
+            '📅 Mau cek saldo cuti tahun berapa?',
+            `Periode tersedia: ${periods.join(', ')}`,
+            'Contoh: cek cuti 2026'
+          ].join('\n');
+        }
+      } else if (data.balances && data.balances.length) {
+        const periodLabel = data.period || '-';
+        response = `📅 Saldo Cuti Anda (Periode ${periodLabel})\n`;
+        data.balances.forEach(b => {
+          const start = b.start_date || '-';
+          const end = b.end_date || '-';
+          response += `${b.leave_type_name || b.ecom_name}: ${b.balance || b.ecom_balance} hari\n`;
+          response += `  periode tanggal: ${start} s/d ${end}\n`;
+        });
+      } else {
+        const periodLabel = data.period || 'tahun yang dipilih';
+        response = `❌ Tidak ada data saldo cuti untuk periode ${periodLabel}.`;
+      }
       break;
     case 'get_profile':
       if (data.profile) {
@@ -1177,16 +1204,43 @@ async function clearLeaveDraft(psid) {
 }
 
 // Helper functions for data fetching (shared with endpoints)
-async function getLeaveBalance(email) {
+async function getLeaveBalance(email, period = null) {
   try {
     const minReq = { headers: {}, session: { accessToken: await getAppLevelDataverseToken() }, user: { email } };
     const personal = await dataverseRequest(minReq, 'get', 'ecom_personalinformations', { params: { $filter: `ecom_workemail eq '${email}'`, $select: 'ecom_personalinformationid' } });
     if (!personal.value?.length) return { error: 'Personal info not found' };
     const employeeId = personal.value[0].ecom_personalinformationid;
-    const period = new Date().getFullYear().toString();
-    const balancesRes = await dataverseRequest(minReq, 'get', 'ecom_leaveusages', { params: { $filter: `_ecom_employee_value eq ${employeeId} and ecom_period eq '${period}'`, $select: 'ecom_balance,_ecom_leavetype_value,ecom_name' } });
-    const balances = (balancesRes.value || []).map(b => ({ leave_type_name: b.ecom_name, balance: b.ecom_balance }));
-    return { balances };
+
+    if (!period) {
+      const periodsRes = await dataverseRequest(minReq, 'get', 'ecom_leaveusages', {
+        params: {
+          $filter: `_ecom_employee_value eq ${employeeId}`,
+          $select: 'ecom_period',
+          $orderby: 'ecom_period desc',
+          $top: 20
+        }
+      });
+      const periods = Array.from(new Set((periodsRes.value || [])
+        .map(i => String(i.ecom_period || '').trim())
+        .filter(Boolean)))
+        .sort((a, b) => b.localeCompare(a));
+      return { action: 'select_period', periods };
+    }
+
+    const balancesRes = await dataverseRequest(minReq, 'get', 'ecom_leaveusages', {
+      params: {
+        $filter: `_ecom_employee_value eq ${employeeId} and ecom_period eq '${period}'`,
+        $select: 'ecom_balance,_ecom_leavetype_value,ecom_name,ecom_period,ecom_startdate,ecom_enddate'
+      }
+    });
+    const balances = (balancesRes.value || []).map(b => ({
+      leave_type_name: b.ecom_name,
+      balance: b.ecom_balance,
+      period: b.ecom_period,
+      start_date: b.ecom_startdate,
+      end_date: b.ecom_enddate
+    }));
+    return { period: String(period), balances };
   } catch (e) {
     fastify.log.error({ msg: 'getLeaveBalance failed', e: e.message });
     return { error: 'Failed to fetch balance' };
@@ -2137,7 +2191,7 @@ async function handleInstagramMessage(senderId, messageText) {
           responseData = await getLeaveTypes();
           break;
         case 'check_leave_balance':
-          if (userEmail) responseData = await getLeaveBalance(userEmail);
+          if (userEmail) responseData = await getLeaveBalance(userEmail, params.period || null);
           break;
         case 'get_profile':
           if (userEmail) responseData = await getProfile(userEmail);
