@@ -996,16 +996,8 @@ async function forwardToPusaka(senderId, messageText) {
     const payloadString = JSON.stringify(payload);
     const bodyBuffer = Buffer.from(payloadString, 'utf8');
 
-    // Pusaka MetaCloud/Webhook verifies HMAC using the Facebook App Secret of the
-    // WhatsApp app registered with Pusaka — NOT the access token.
-    // PUSAKA_APP_SECRET = Facebook App Secret (found in Meta Developers → App Settings → Basic)
-    // PUSAKA_WEBHOOK_SECRET = access token (kept for reference but not used for signing)
-    const appSecret = process.env.PUSAKA_APP_SECRET || pusakaSecret;
+    // Temporarily send without signature to test if Pusaka accepts unsigned requests
     const extraHeaders = {};
-    if (appSecret) {
-      extraHeaders['X-Hub-Signature-256'] = `sha256=${crypto.createHmac('sha256', appSecret).update(bodyBuffer).digest('hex')}`;
-      extraHeaders['X-Hub-Signature'] = `sha1=${crypto.createHmac('sha1', appSecret).update(bodyBuffer).digest('hex')}`;
-    }
 
     fastify.log.info({ msg: 'Forwarding Instagram DM to Pusaka', senderId, messagePreview: String(messageText || '').substring(0, 80) });
 
