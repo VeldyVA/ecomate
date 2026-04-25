@@ -986,7 +986,9 @@ function formatInstagramResponse(data, intent) {
         '- cek cuti / saldo',
         '- tipe cuti',
         '- ajukan cuti <tanggal> (contoh: ajukan cuti 27 april 2026)',
+        '- ajukan cuti khusus <tanggal> (contoh: ajukan cuti khusus 27 april 2026)',
         '- pilih cuti <nomor> <jumlah_hari> <alasan(optional)>',
+        '- pilih cuti khusus <nomor> <jumlah_hari> <alasan(optional)>',
         '- riwayat',
         '- development',
         '- peer review',
@@ -1132,12 +1134,14 @@ function formatInstagramResponse(data, intent) {
           response = '❌ Jenis cuti tidak ditemukan saat ini. Coba lagi nanti.';
           break;
         }
+        const isSpecial = data.submissionKind === 'special';
+        const chooseCmd = isSpecial ? 'pilih cuti khusus' : 'pilih cuti';
         response = [
           `📝 Tanggal mulai cuti: ${data.startDate || '-'}`,
           'Pilih jenis cuti dengan balas:',
-          'pilih cuti <nomor> <jumlah_hari> <alasan(optional)>',
+          `${chooseCmd} <nomor> <jumlah_hari> <alasan(optional)>`,
           '',
-          'Contoh: pilih cuti 1 2 urusan keluarga',
+          `Contoh: ${chooseCmd} 1 2 urusan keluarga`,
           '',
           'Daftar jenis cuti:'
         ].join('\n');
@@ -1719,11 +1723,24 @@ function parseFlexibleDateFromText(text) {
 function parseSubmitLeaveCommand(rawMessage) {
   const raw = String(rawMessage || '').trim();
 
-  // Step 2 flow: choose leave type by option number
-  let m = raw.match(/^pilih\s+cuti\s+(\d+)(?:\s+(\d+))?(?:\s+(.+))?$/i);
+  // Step 2 flow: choose special leave type by option number
+  let m = raw.match(/^pilih\s+cuti\s+khusus\s+(\d+)(?:\s+(\d+))?(?:\s+(.+))?$/i);
   if (m) {
     return {
       mode: 'select_type',
+      submissionKind: 'special',
+      optionIndex: Number(m[1]),
+      days: Number(m[2] || 1),
+      reason: (m[3] || '').trim() || null,
+    };
+  }
+
+  // Step 2 flow: choose leave type by option number
+  m = raw.match(/^pilih\s+cuti\s+(\d+)(?:\s+(\d+))?(?:\s+(.+))?$/i);
+  if (m) {
+    return {
+      mode: 'select_type',
+      submissionKind: 'regular',
       optionIndex: Number(m[1]),
       days: Number(m[2] || 1),
       reason: (m[3] || '').trim() || null,
@@ -1735,6 +1752,7 @@ function parseSubmitLeaveCommand(rawMessage) {
   if (m) {
     return {
       mode: 'legacy_full',
+      submissionKind: 'regular',
       leaveTypeId: m[1],
       startDate: m[2],
       days: Number(m[3]),
@@ -1742,11 +1760,18 @@ function parseSubmitLeaveCommand(rawMessage) {
     };
   }
 
+  // Simplified command (special): user only sends start date
+  if (/^ajukan\s+cuti\s+khusus\b/i.test(raw)) {
+    const startDate = parseFlexibleDateFromText(raw);
+    if (!startDate) return null;
+    return { mode: 'need_type', submissionKind: 'special', startDate };
+  }
+
   // Simplified command: user only sends start date
   if (/^ajukan\s+cuti\b/i.test(raw)) {
     const startDate = parseFlexibleDateFromText(raw);
     if (!startDate) return null;
-    return { mode: 'need_type', startDate };
+    return { mode: 'need_type', submissionKind: 'regular', startDate };
   }
 
   return null;
@@ -1766,6 +1791,7 @@ async function submitLeaveRequestViaDm(email, rawMessage, senderId = null) {
   let startDate;
   let days;
   let reason;
+  let submissionKind = parsed.submissionKind || 'regular';
 
   if (parsed.mode === 'need_type') {
     const leaveTypeData = await getLeaveTypes();
@@ -1777,6 +1803,7 @@ async function submitLeaveRequestViaDm(email, rawMessage, senderId = null) {
     if (senderId) {
       await setLeaveDraft(senderId, {
         email,
+        submissionKind,
         startDate: parsed.startDate,
         options: leaveTypes.map((t) => ({
           leaveTypeId: t.ecom_leavetypeid,
@@ -1789,6 +1816,7 @@ async function submitLeaveRequestViaDm(email, rawMessage, senderId = null) {
     return {
       ok: false,
       action: 'select_leave_type',
+      submissionKind,
       startDate: parsed.startDate,
       leaveTypes
     };
@@ -1803,6 +1831,7 @@ async function submitLeaveRequestViaDm(email, rawMessage, senderId = null) {
       return { ok: false, message: 'Sesi pengajuan tidak ditemukan. Ulangi: ajukan cuti <tanggal>.' };
     }
 
+    submissionKind = draft.submissionKind || submissionKind;
     const idx = parsed.optionIndex - 1;
     if (idx < 0 || idx >= draft.options.length) {
       return { ok: false, message: `Nomor jenis cuti tidak valid. Pilih 1 sampai ${draft.options.length}.` };
@@ -1817,6 +1846,7 @@ async function submitLeaveRequestViaDm(email, rawMessage, senderId = null) {
     startDate = parsed.startDate;
     days = parsed.days;
     reason = parsed.reason;
+    submissionKind = parsed.submissionKind || submissionKind;
   }
 
   if (!leaveTypeId || !startDate || !days) {
@@ -1865,6 +1895,100 @@ async function submitLeaveRequestViaDm(email, rawMessage, senderId = null) {
       (b.ecom_employeename || '').localeCompare(a.ecom_employeename || '')
     )[0];
     const employeeGuid = employeeInfo.ecom_personalinformationid;
+
+    if (submissionKind === 'special') {
+      const leaveTypeInfo = await dataverseRequest(minReq, 'get', `ecom_leavetypes(${leaveTypeId})`, {
+        params: { $select: 'ecom_quota,ecom_name' }
+      });
+
+      const isLongLeave = String(leaveTypeInfo.ecom_name || '').trim().toLowerCase().startsWith('cuti panjang');
+      if (isLongLeave) {
+        if (days > 10) return { ok: false, message: 'Cuti panjang maksimal 10 hari per pengajuan.' };
+
+        const employmentDate = new Date(employeeInfo.ecom_dateofemployment);
+        if (isNaN(employmentDate.getTime())) return { ok: false, message: 'Tanggal mulai kerja tidak valid.' };
+
+        const today = new Date();
+        const tenureInYears = (today.getTime() - employmentDate.getTime()) / (1000 * 60 * 60 * 24 * 365.25);
+        if (tenureInYears < 5) {
+          return { ok: false, message: `Belum eligible cuti panjang. Minimal 5 tahun masa kerja (Anda: ${tenureInYears.toFixed(1)} tahun).` };
+        }
+
+        const currentTier = Math.floor(tenureInYears / 5) * 5;
+        const eligibilityStartDate = new Date(employmentDate);
+        eligibilityStartDate.setFullYear(eligibilityStartDate.getFullYear() + currentTier);
+        const expirationDate = new Date(eligibilityStartDate);
+        expirationDate.setFullYear(expirationDate.getFullYear() + 3);
+        if (today > expirationDate) {
+          return { ok: false, message: `Jendela cuti panjang periode ${currentTier} tahun sudah kedaluwarsa.` };
+        }
+
+        const pastLongLeaves = await dataverseRequest(minReq, 'get', 'ecom_employeeleaves', {
+          params: {
+            $filter: `_ecom_employee_value eq ${employeeGuid} and _ecom_leavetype_value eq ${leaveTypeId} and createdon ge ${eligibilityStartDate.toISOString()} and (ecom_leavestatus ne 273700003 and ecom_leavestatus ne 273700004)`,
+            $select: 'ecom_numberofdays'
+          }
+        });
+        const taken = (pastLongLeaves.value || []).reduce((sum, leave) => sum + (leave.ecom_numberofdays || 0), 0);
+        if ((taken + days) > 20) {
+          return { ok: false, message: `Melebihi kuota cuti panjang 20 hari (sudah diambil: ${taken}, diminta: ${days}).` };
+        }
+      } else {
+        if (leaveTypeInfo.ecom_quota == null) {
+          return { ok: false, message: `Tipe cuti '${leaveTypeInfo.ecom_name}' tidak menggunakan kuota special.` };
+        }
+        const quota = leaveTypeInfo.ecom_quota;
+        const pastLeaves = await dataverseRequest(minReq, 'get', 'ecom_employeeleaves', {
+          params: {
+            $filter: `_ecom_employee_value eq ${employeeGuid} and _ecom_leavetype_value eq ${leaveTypeId} and createdon ge ${leaveYear}-01-01T00:00:00Z and createdon le ${leaveYear}-12-31T23:59:59Z and (ecom_leavestatus ne 273700003 and ecom_leavestatus ne 273700004)`,
+            $select: 'ecom_numberofdays'
+          }
+        });
+        const taken = (pastLeaves.value || []).reduce((sum, leave) => sum + (leave.ecom_numberofdays || 0), 0);
+        if ((taken + days) > quota) {
+          return { ok: false, message: `Melebihi kuota '${leaveTypeInfo.ecom_name}' (quota: ${quota}, sudah: ${taken}, diminta: ${days}).` };
+        }
+      }
+
+      const endDate = new Date(start);
+      let daysAdded = 0;
+      while (daysAdded < days - 1) {
+        endDate.setUTCDate(endDate.getUTCDate() + 1);
+        const d = endDate.getUTCDay();
+        if (d !== 0 && d !== 6) daysAdded++;
+      }
+      const endDateStr = endDate.toISOString().split('T')[0];
+      const returnDateStr = calculateReturnDate(endDateStr);
+
+      const overlapError = await checkForOverlappingLeave(minReq, employeeGuid, startDate, endDateStr);
+      if (overlapError) return { ok: false, message: `Tanggal cuti bentrok. ${overlapError}` };
+
+      const newLeaveRequest = {
+        'ecom_Employee@odata.bind': `/ecom_personalinformations(${employeeGuid})`,
+        'ecom_LeaveType@odata.bind': `/ecom_leavetypes(${leaveTypeId})`,
+        ecom_name: `${employeeInfo.ecom_nik} - ${employeeInfo.ecom_employeename} - Leave request`,
+        ecom_startdate: startDate,
+        ecom_enddate: endDateStr,
+        ecom_returndate: returnDateStr,
+        ecom_numberofdays: days,
+        ecom_reason: reason || null
+      };
+
+      const inserted = await dataverseRequest(minReq, 'post', 'ecom_employeeleaves', { data: newLeaveRequest });
+      const leaveId = inserted.ecom_employeeleaveid || inserted.ecom_leaverequestid;
+
+      return {
+        ok: true,
+        leaveId,
+        leaveTypeName: leaveTypeInfo.ecom_name || 'Unknown',
+        startDate,
+        endDate: endDateStr,
+        returnDate: returnDateStr,
+        days,
+        balanceRemaining: '-',
+        submissionKind: 'special'
+      };
+    }
 
     const balancesRes = await dataverseRequest(minReq, 'get', 'ecom_leaveusages', {
       params: {
