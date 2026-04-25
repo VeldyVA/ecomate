@@ -1005,7 +1005,7 @@ async function forwardToPusaka(senderId, messageText) {
       extraHeaders['X-Hub-Signature-256'] = `sha256=${crypto.createHmac('sha256', appSecret).update(bodyBuffer).digest('hex')}`;
       extraHeaders['X-Hub-Signature'] = `sha1=${crypto.createHmac('sha1', appSecret).update(bodyBuffer).digest('hex')}`;
     } else {
-      fastify.log.error({ msg: 'PUSAKA_APP_SECRET not set — Pusaka will reject with 400. Set it to the Facebook App Secret of Pusaka\'s Meta app.' });
+      fastify.log.error({ msg: 'PUSAKA_APP_SECRET not set — Pusaka will reject with 400. Set it to the Facebook App Secret from Pusaka\'s Meta Developer App.' });
     }
 
     fastify.log.info({ msg: 'Forwarding Instagram DM to Pusaka', senderId, messagePreview: String(messageText || '').substring(0, 80) });
