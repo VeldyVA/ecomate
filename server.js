@@ -852,44 +852,6 @@ function verifyInstagramSignature(payload, signature, appSecret) {
   }
 }
 
-function parseIntent(messageText) {
-  const text = (messageText || '').toLowerCase().trim();
-  if (!text) return { intent: 'unknown', params: {} };
-  if (text.startsWith('admin ')) {
-    return { intent: 'admin_query', params: parseAdminCommand(messageText) };
-  }
-  if (text === 'help' || text === 'bantuan' || text === 'menu') return { intent: 'help', params: {} };
-  if (text.includes('login') || text.includes('masuk')) return { intent: 'login', params: {} };
-  if (text.includes('jenis cuti') || text.includes('tipe cuti') || text.includes('leave type')) return { intent: 'get_leave_types', params: {} };
-  if (text.includes('cek cuti') || text.includes('saldo') || text.includes('cuti berapa')) return { intent: 'check_leave_balance', params: { period: new Date().getFullYear().toString() } };
-  if (text.includes('ajukan') || text.includes('apply') || text.includes('request')) return { intent: 'submit_leave', params: { raw_message: messageText } };
-  if (text.includes('data') || text.includes('profil') || text.includes('info')) return { intent: 'get_profile', params: {} };
-  if (text.includes('posisi') || text.includes('jabatan') || text.includes('grade')) return { intent: 'get_position', params: {} };
-  if (text.includes('development') || text.includes('pengembangan') || text.includes('project')) return { intent: 'get_developments', params: {} };
-  if (text.includes('peer review') || text.includes('review') || text.includes('penilaian')) return { intent: 'get_peer_review_summary', params: {} };
-  if (text.includes('riwayat') || text.includes('history') || text.includes('daftar cuti')) return { intent: 'get_leave_requests', params: {} };
-  return { intent: 'unknown', params: { raw_message: messageText } };
-}
-
-function parseAdminCommand(messageText) {
-  const raw = (messageText || '').trim();
-  const text = raw.toLowerCase();
-
-  const withCriteria = /^admin\s+(profile|saldo|position|developments?|review|peer\s*review)\s+(email|id|name)\s+(.+)$/i.exec(raw);
-  if (withCriteria) {
-    const action = withCriteria[1].toLowerCase().replace(/\s+/g, '_');
-    const by = withCriteria[2].toLowerCase();
-    const value = (withCriteria[3] || '').trim();
-    return { action, by, value };
-  }
-
-  if (text.startsWith('admin cuti') || text.startsWith('admin leave')) {
-    return { action: 'leave_requests' };
-  }
-
-  return { action: 'unknown', raw };
-}
-
 async function sendInstagramMessage(recipientId, messageText, accessToken) {
   const token = (accessToken || process.env.INSTAGRAM_ACCESS_TOKEN || '').trim();
   if (!token) {
@@ -954,798 +916,92 @@ async function sendInstagramMessage(recipientId, messageText, accessToken) {
   }
 }
 
-function formatInstagramResponse(data, intent) {
-  let response = '';
-  switch (intent) {
-    case 'help':
-      response = [
-        '📌 Perintah yang tersedia:',
-        '- login',
-        '- data / profil',
-        '- posisi / jabatan',
-        '- cek cuti / saldo',
-        '- tipe cuti',
-        '- riwayat',
-        '- development',
-        '- peer review',
-        '',
-        '🔒 Perintah admin (butuh role admin/co_admin):',
-        '- admin profile email <email>',
-        '- admin saldo email <email>',
-        '- admin position email <email>',
-        '- admin development email <email>',
-        '- admin review email <email>',
-        '- admin cuti'
-      ].join('\n');
-      break;
-    case 'login':
-      response = '🔐 Login diminta\n\nUntuk akses data, klik link ini untuk login: https://ecomate-phi.vercel.app/login\n\nSetelah login, salin OTP dari browser dan kirim ke sini.';
-      break;
-    case 'get_leave_types':
-      if (data.leaveTypes && data.leaveTypes.length) {
-        response = '🗂️ Jenis Cuti Aktif:\n';
-        data.leaveTypes.slice(0, 10).forEach(t => {
-          const quota = t.ecom_quota == null ? '-' : t.ecom_quota;
-          response += `- ${t.ecom_name} (kuota: ${quota})\n`;
-        });
-      } else {
-        response = '❌ Data jenis cuti tidak ditemukan.';
-      }
-      break;
-    case 'check_leave_balance':
-      if (data.balances && data.balances.length) {
-        response = '📅 Saldo Cuti Anda:\n';
-        data.balances.forEach(b => { response += `${b.leave_type_name || b.ecom_name}: ${b.balance || b.ecom_balance} hari\n`; });
-      } else response = '❌ Tidak ada data saldo cuti untuk tahun ini.';
-      break;
-    case 'get_profile':
-      if (data.profile) {
-        const profile = data.profile;
-        const fields = [
-          ['Nama', profile.ecom_employeename],
-          ['Email Kerja', profile.ecom_workemail],
-          ['Email Personal', profile.ecom_personalemail],
-          ['NIK', profile.ecom_nik],
-          ['No HP', profile.ecom_phonenumber],
-          ['Gender', profile.ecom_gender],
-          ['Tanggal Lahir', profile.ecom_dateofbirth],
-          ['Tempat Lahir', profile.ecom_placeofbirth],
-          ['Agama', profile.ecom_religion],
-          ['Status Menikah', profile.ecom_maritalstatus],
-          ['Jumlah Tanggungan', profile.ecom_numberofdependent],
-          ['Alamat', profile.ecom_address],
-          ['Jabatan', profile.ecom_jobtitle],
-          ['Tanggal Join', profile.ecom_dateofemployment],
-          ['Bank', profile.ecom_bankname],
-          ['No Rekening', profile.ecom_bankaccountnumber],
-          ['NPWP', profile.ecom_npwpnumber],
-          ['BPJS Kesehatan', profile.ecom_bpjsnumber],
-          ['BPJS TK', profile.ecom_bpjstknumber],
-          ['Kontak Darurat', profile.ecom_emergencycontactname],
-          ['Telp Darurat', profile.ecom_emergencycontractphonenumber],
-          ['Hubungan Darurat', profile.ecom_relationship]
-        ].filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== '');
+// ==============================
+// 🔹 Instagram → Pusaka/QLAR AI Agent Proxy
+// ==============================
 
-        response = `👤 Profil Lengkap Anda\n${fields.map(([k, v]) => `${k}: ${v}`).join('\n')}`;
-      } else {
-        response = '❌ Profil tidak ditemukan.';
-      }
-      break;
-    case 'admin_query':
-      response = data.adminText || '❌ Perintah admin gagal diproses.';
-      break;
-    case 'get_position':
-      if (data.position_name || data.grade_label) {
-        response = [
-          '🧭 Posisi Saat Ini:',
-          `Posisi: ${data.position_name || '-'}`,
-          `Grade: ${data.grade_label || '-'}`,
-          `Status: ${data.status_label || '-'}`,
-          `Mulai: ${data.start_date || '-'}`
-        ].join('\n');
-      } else {
-        response = '❌ Data posisi tidak ditemukan.';
-      }
-      break;
-    case 'get_leave_requests':
-      if (data.requests && data.requests.length) {
-        response = '📋 Riwayat Cuti:\n';
-        data.requests.slice(0,5).forEach(r => { response += `${r.leave_type}: ${r.start_date} → ${r.end_date} [${r.status}]\n`; });
-      } else response = '✅ Tidak ada riwayat cuti.';
-      break;
-    case 'get_developments':
-      if (data.items && data.items.length) {
-        response = '🚀 Development Terbaru:\n';
-        data.items.slice(0, 5).forEach((d) => {
-          response += `${d.title || '-'} (${d.type_label || '-'}) ${d.start_date || '-'}\n`;
-        });
-      } else {
-        response = '✅ Belum ada data development.';
-      }
-      break;
-    case 'get_peer_review_summary':
-      if (data.items && data.items.length) {
-        response = '⭐ Summary Peer Review:\n';
-        data.items.slice(0, 5).forEach((r) => {
-          response += `${r.project_name || '-'} | avg: ${r.average_rating ?? '-'} | total: ${r.total_peer_review ?? '-'}\n`;
-        });
-      } else {
-        response = '✅ Belum ada data peer review.';
-      }
-      break;
-    case 'submit_leave':
-      if (data.ok) {
-        response = [
-          '✅ Pengajuan cuti berhasil dibuat.',
-          `Leave ID: ${data.leaveId || '-'}`,
-          `Tipe Cuti: ${data.leaveTypeName || '-'}`,
-          `Periode: ${data.startDate || '-'} s/d ${data.endDate || '-'}`,
-          `Masuk Kerja: ${data.returnDate || '-'}`,
-          `Jumlah Hari: ${data.days || 0}`,
-          `Sisa Saldo: ${data.balanceRemaining ?? '-'}`
-        ].join('\n');
-      } else {
-        response = `❌ Gagal ajukan cuti. ${data.message || ''}`.trim();
-      }
-      break;
-    default:
-      response = '❓ Perintah tidak dipahami. Ketik bantuan untuk lihat daftar perintah.';
-  }
-  const maxResponseLength = (intent === 'get_profile' || intent === 'admin_query') ? 1800 : 900;
-  if (response.length > maxResponseLength) response = response.substring(0, maxResponseLength - 3) + '...';
-  return response;
-}
+async function forwardToPusaka(senderId, messageText) {
+  const pusakaWebhookUrl = process.env.PUSAKA_WEBHOOK_URL;
+  const pusakaSecret = process.env.PUSAKA_WEBHOOK_SECRET;
 
-function getPermissionByEmail(email) {
-  if (!email) return 'employee';
-  if (isAdmin(email)) return 'admin';
-  if (isCoAdmin(email)) return 'co_admin';
-  return 'employee';
-}
-
-async function getPSIDUserMapping(psid) {
-  try {
-    const data = await kv.get(`instagram:psid:${psid}`);
-    if (!data) return null;
-    if (typeof data === 'string') {
-      return {
-        email: data,
-        permission: getPermissionByEmail(data),
-      };
-    }
-    return data;
-  } catch (e) {
-    fastify.log.error({ msg: 'kv.get failed', e: e.message });
-    return null;
-  }
-}
-
-async function setPSIDUserMapping(psid, userData, ttl = 2592000) { // 30 days
-  try {
-    await kv.setex(`instagram:psid:${psid}`, ttl, userData);
-  } catch (e) {
-    fastify.log.error({ msg: 'kv.setex failed', e: e.message });
-  }
-}
-
-// Helper functions for data fetching (shared with endpoints)
-async function getLeaveBalance(email) {
-  try {
-    const minReq = { headers: {}, session: { accessToken: await getAppLevelDataverseToken() }, user: { email } };
-    const personal = await dataverseRequest(minReq, 'get', 'ecom_personalinformations', { params: { $filter: `ecom_workemail eq '${email}'`, $select: 'ecom_personalinformationid' } });
-    if (!personal.value?.length) return { error: 'Personal info not found' };
-    const employeeId = personal.value[0].ecom_personalinformationid;
-    const period = new Date().getFullYear().toString();
-    const balancesRes = await dataverseRequest(minReq, 'get', 'ecom_leaveusages', { params: { $filter: `_ecom_employee_value eq ${employeeId} and ecom_period eq '${period}'`, $select: 'ecom_balance,_ecom_leavetype_value,ecom_name' } });
-    const balances = (balancesRes.value || []).map(b => ({ leave_type_name: b.ecom_name, balance: b.ecom_balance }));
-    return { balances };
-  } catch (e) {
-    fastify.log.error({ msg: 'getLeaveBalance failed', e: e.message });
-    return { error: 'Failed to fetch balance' };
-  }
-}
-
-async function getProfile(email) {
-  try {
-    const minReq = { headers: {}, session: { accessToken: await getAppLevelDataverseToken() }, user: { email } };
-    const personalInfoRes = await dataverseRequest(minReq, 'get', 'ecom_personalinformations', {
-      params: {
-        $filter: `ecom_workemail eq '${email}'`,
-        $select: [
-          'ecom_personalinformationid', 'ecom_nik', 'ecom_employeename', 'ecom_gender', 'ecom_dateofbirth',
-          'ecom_phonenumber', 'statecode', 'ecom_startwork', 'ecom_workexperience', 'ecom_dateofemployment',
-          'ecom_emergencycontactname', 'ecom_emergencycontactaddress', 'ecom_emergencycontractphonenumber',
-          'ecom_relationship', 'ecom_address', 'ecom_ktpnumber', 'ecom_npwpnumber', 'ecom_profilepicture',
-          'ecom_bankaccountnumber', 'ecom_bpjsnumber', 'ecom_bpjstknumber', 'ecom_maritalstatus',
-          'ecom_numberofdependent', 'ecom_placeofbirth', 'ecom_religion', 'ecom_bankname', 'ecom_accountname',
-          'ecom_personalemail', 'ecom_workemail', 'ecom_insurancenumber'
-        ].join(',')
-      }
-    });
-
-    if (personalInfoRes.value?.length) {
-      const profile = personalInfoRes.value[0];
-
-      try {
-        const latestPositionData = await dataverseRequest(minReq, 'get', 'ecom_employeepositions', {
-          params: {
-            $filter: `_ecom_personalinformation_value eq ${profile.ecom_personalinformationid} and statecode eq 0`,
-            $select: 'ecom_startdate',
-            $expand: 'ecom_JobTitle($select=ecom_jobtitle)',
-            $orderby: 'ecom_startdate desc',
-            $top: 1
-          }
-        });
-        profile.ecom_jobtitle = latestPositionData.value?.[0]?.ecom_JobTitle?.ecom_jobtitle || null;
-      } catch (positionErr) {
-        fastify.log.error({ msg: 'getProfile position lookup failed', e: positionErr.message });
-        profile.ecom_jobtitle = null;
-      }
-
-      return { profile };
-    }
-
-    return { error: 'Profile not found' };
-  } catch (e) {
-    fastify.log.error({ msg: 'getProfile failed', e: e.message });
-    return { error: 'Failed to fetch profile' };
-  }
-}
-
-async function resolveEmployeeIdForAdmin(minReq, by, value) {
-  if (by === 'id') return value;
-  const filter = by === 'email'
-    ? `ecom_workemail eq '${value}'`
-    : `contains(ecom_employeename, '${value}')`;
-
-  const userData = await dataverseRequest(minReq, 'get', 'ecom_personalinformations', {
-    params: {
-      $filter: filter,
-      $select: 'ecom_personalinformationid'
-    }
-  });
-
-  return userData.value?.[0]?.ecom_personalinformationid || null;
-}
-
-async function handleAdminQuery(userMapping, params) {
-  const permission = userMapping?.permission || 'employee';
-  if (!['admin', 'co_admin'].includes(permission)) {
-    return { adminText: '⛔ Fitur ini hanya untuk admin/co_admin.' };
+  if (!pusakaWebhookUrl) {
+    fastify.log.error({ msg: 'PUSAKA_WEBHOOK_URL is not set. Cannot forward message.' });
+    return;
   }
 
-  const minReq = { headers: {}, session: { accessToken: await getAppLevelDataverseToken() }, user: { email: userMapping.email, permission } };
-  const action = params?.action;
-  const by = params?.by;
-  const value = params?.value;
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const messageId = `ig_${senderId}_${timestamp}`;
+  const callbackUrl = `${process.env.APP_BASE_URL || 'https://ecomate-phi.vercel.app'}/pusaka/reply`;
 
-  try {
-    if (action === 'profile') {
-      if (!by || !value) return { adminText: 'Gunakan: admin profile email|id|name <nilai>' };
-      const employeeId = await resolveEmployeeIdForAdmin(minReq, by, value);
-      if (!employeeId) return { adminText: '❌ Karyawan tidak ditemukan.' };
-
-      const profileRes = await dataverseRequest(minReq, 'get', 'ecom_personalinformations', {
-        params: {
-          $filter: `ecom_personalinformationid eq ${employeeId}`,
-          $select: [
-            'ecom_personalinformationid', 'ecom_nik', 'ecom_employeename', 'ecom_gender', 'ecom_dateofbirth',
-            'ecom_phonenumber', 'statecode', 'ecom_startwork', 'ecom_workexperience', 'ecom_dateofemployment',
-            'ecom_emergencycontactname', 'ecom_emergencycontactaddress', 'ecom_emergencycontractphonenumber',
-            'ecom_relationship', 'ecom_address', 'ecom_ktpnumber', 'ecom_npwpnumber', 'ecom_profilepicture',
-            'ecom_bankaccountnumber', 'ecom_bpjsnumber', 'ecom_bpjstknumber', 'ecom_maritalstatus',
-            'ecom_numberofdependent', 'ecom_placeofbirth', 'ecom_religion', 'ecom_bankname', 'ecom_accountname',
-            'ecom_personalemail', 'ecom_workemail', 'ecom_insurancenumber'
-          ].join(',')
-        }
-      });
-      const p = profileRes.value?.[0];
-      if (!p) return { adminText: '❌ Profil karyawan tidak ditemukan.' };
-
-      try {
-        const latestPositionData = await dataverseRequest(minReq, 'get', 'ecom_employeepositions', {
-          params: {
-            $filter: `_ecom_personalinformation_value eq ${p.ecom_personalinformationid} and statecode eq 0`,
-            $select: 'ecom_startdate',
-            $expand: 'ecom_JobTitle($select=ecom_jobtitle)',
-            $orderby: 'ecom_startdate desc',
-            $top: 1
-          }
-        });
-        p.ecom_jobtitle = latestPositionData.value?.[0]?.ecom_JobTitle?.ecom_jobtitle || null;
-      } catch (positionErr) {
-        fastify.log.error({ msg: 'admin profile: position lookup failed', e: positionErr.message });
-        p.ecom_jobtitle = null;
-      }
-
-      const fields = [
-        ['Nama', p.ecom_employeename],
-        ['Email Kerja', p.ecom_workemail],
-        ['Email Personal', p.ecom_personalemail],
-        ['NIK', p.ecom_nik],
-        ['No HP', p.ecom_phonenumber],
-        ['Gender', p.ecom_gender],
-        ['Tanggal Lahir', p.ecom_dateofbirth],
-        ['Tempat Lahir', p.ecom_placeofbirth],
-        ['Agama', p.ecom_religion],
-        ['Status Menikah', p.ecom_maritalstatus],
-        ['Jumlah Tanggungan', p.ecom_numberofdependent],
-        ['Alamat', p.ecom_address],
-        ['Jabatan', p.ecom_jobtitle],
-        ['Tanggal Join', p.ecom_dateofemployment],
-        ['Bank', p.ecom_bankname],
-        ['No Rekening', p.ecom_bankaccountnumber],
-        ['NPWP', p.ecom_npwpnumber],
-        ['No KTP', p.ecom_ktpnumber],
-        ['BPJS Kesehatan', p.ecom_bpjsnumber],
-        ['BPJS TK', p.ecom_bpjstknumber],
-        ['No Asuransi', p.ecom_insurancenumber],
-        ['Kontak Darurat', p.ecom_emergencycontactname],
-        ['Alamat Darurat', p.ecom_emergencycontactaddress],
-        ['Telp Darurat', p.ecom_emergencycontractphonenumber],
-        ['Hubungan Darurat', p.ecom_relationship]
-      ].filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== '');
-
-      return {
-        adminText: `🧾 Profil Karyawan Lengkap\n${fields.map(([k, v]) => `${k}: ${v}`).join('\n')}`
-      };
-    }
-
-    if (action === 'saldo') {
-      if (!by || !value) return { adminText: 'Gunakan: admin saldo email|id|name <nilai>' };
-      const employeeId = await resolveEmployeeIdForAdmin(minReq, by, value);
-      if (!employeeId) return { adminText: '❌ Karyawan tidak ditemukan.' };
-
-      const period = String(new Date().getFullYear());
-      const balanceData = await dataverseRequest(minReq, 'get', 'ecom_leaveusages', {
-        params: {
-          $filter: `_ecom_employee_value eq ${employeeId} and ecom_period eq '${period}'`,
-          $select: 'ecom_balance,ecom_name'
-        }
-      });
-      const items = balanceData.value || [];
-      if (!items.length) return { adminText: `❌ Tidak ada saldo cuti periode ${period}.` };
-      return { adminText: `📊 Saldo Cuti (${period})\n${items.map((i) => `- ${i.ecom_name || '-'}: ${i.ecom_balance || 0} hari`).join('\n')}` };
-    }
-
-    if (action === 'position') {
-      if (!by || !value) return { adminText: 'Gunakan: admin position email|id|name <nilai>' };
-      const employeeId = await resolveEmployeeIdForAdmin(minReq, by, value);
-      if (!employeeId) return { adminText: '❌ Karyawan tidak ditemukan.' };
-
-      const positionData = await dataverseRequest(minReq, 'get', 'ecom_employeepositions', {
-        params: {
-          $filter: `_ecom_personalinformation_value eq ${employeeId}`,
-          $select: 'ecom_startdate,ecom_grading,statecode',
-          $expand: 'ecom_JobTitle($select=ecom_jobtitle),ecom_PersonalInformation($select=ecom_employeename)',
-          $orderby: 'ecom_startdate desc',
-          $top: 5
-        }
-      });
-      const rows = positionData.value || [];
-      if (!rows.length) return { adminText: '❌ Data posisi tidak ditemukan.' };
-      return {
-        adminText: `🧭 Riwayat Posisi\n${rows.map((r) => `- ${r.ecom_PersonalInformation?.ecom_employeename || '-'} | ${r.ecom_JobTitle?.ecom_jobtitle || '-'} | ${GRADE_MAP[r.ecom_grading] || 'Unknown'} | ${r.ecom_startdate || '-'}`).join('\n')}`
-      };
-    }
-
-    if (action === 'development' || action === 'developments') {
-      if (!by || !value) return { adminText: 'Gunakan: admin development email|id|name <nilai>' };
-      const employeeId = await resolveEmployeeIdForAdmin(minReq, by, value);
-      if (!employeeId) return { adminText: '❌ Karyawan tidak ditemukan.' };
-
-      const historyData = await dataverseRequest(minReq, 'get', 'ecom_developments', {
-        params: {
-          $filter: `_ecom_employeeid_value eq ${employeeId}`,
-          $select: 'ecom_title,ecom_date,ecom_type',
-          $orderby: 'ecom_date desc',
-          $top: 5
-        }
-      });
-      const rows = historyData.value || [];
-      if (!rows.length) return { adminText: '✅ Tidak ada data development.' };
-      return { adminText: `🚀 Development Karyawan\n${rows.map((r) => `- ${r.ecom_title || '-'} (${DEVELOPMENT_TYPE_MAP[r.ecom_type] || 'Unknown'}) ${r.ecom_date || '-'}`).join('\n')}` };
-    }
-
-    if (action === 'review' || action === 'peer_review') {
-      if (!by || !value) return { adminText: 'Gunakan: admin review email|id|name <nilai>' };
-
-      let userIdToSearch = null;
-      if (by === 'id') {
-        userIdToSearch = value;
-      } else {
-        const userFilter = by === 'email'
-          ? `internalemailaddress eq '${value}'`
-          : `contains(fullname, '${value}')`;
-        const userRes = await dataverseRequest(minReq, 'get', 'systemusers', {
-          params: {
-            $filter: userFilter,
-            $select: 'systemuserid'
-          }
-        });
-        userIdToSearch = userRes.value?.[0]?.systemuserid || null;
-      }
-
-      if (!userIdToSearch) return { adminText: '❌ User system tidak ditemukan.' };
-
-      const summaryData = await dataverseRequest(minReq, 'get', 'ecom_summarypeerreviews', {
-        params: {
-          $filter: `_ecom_employee_value eq ${userIdToSearch}`,
-          $select: 'ecom_totalpeerreview,ecom_averagerating',
-          $expand: 'ecom_Project($select=ecom_projectname)',
-          $top: 5
-        }
-      });
-      const rows = summaryData.value || [];
-      if (!rows.length) return { adminText: '✅ Tidak ada data peer review.' };
-      return { adminText: `⭐ Summary Peer Review\n${rows.map((r) => `- ${r.ecom_Project?.ecom_projectname || '-'} | avg ${r.ecom_averagerating ?? '-'} | total ${r.ecom_totalpeerreview ?? '-'}`).join('\n')}` };
-    }
-
-    if (action === 'leave_requests') {
-      const list = await dataverseRequest(minReq, 'get', 'ecom_employeeleaves', {
-        params: {
-          $select: 'ecom_name,ecom_startdate,ecom_enddate,ecom_leavestatus,createdon',
-          $expand: 'ecom_Employee($select=ecom_employeename),ecom_LeaveType($select=ecom_name)',
-          $orderby: 'createdon desc',
-          $top: 10
-        }
-      });
-      const rows = list.value || [];
-      if (!rows.length) return { adminText: '✅ Tidak ada data cuti.' };
-      return {
-        adminText: `📋 Leave Requests (terbaru)\n${rows.map((r) => `- ${r.ecom_Employee?.ecom_employeename || '-'} | ${r.ecom_LeaveType?.ecom_name || r.ecom_name || '-'} | ${r.ecom_startdate || '-'} s/d ${r.ecom_enddate || '-'} | status ${r.ecom_leavestatus ?? '-'}`).join('\n')}`
-      };
-    }
-
-    return { adminText: '❓ Perintah admin belum dikenali. Ketik bantuan untuk contoh command.' };
-  } catch (e) {
-    fastify.log.error({ msg: 'handleAdminQuery failed', e: e.message, params });
-    return { adminText: `❌ Admin query gagal: ${e.message}` };
-  }
-}
-
-async function getLeaveRequests(email) {
-  try {
-    const minReq = { headers: {}, session: { accessToken: await getAppLevelDataverseToken() }, user: { email } };
-    const personal = await dataverseRequest(minReq, 'get', 'ecom_personalinformations', { params: { $filter: `ecom_workemail eq '${email}'`, $select: 'ecom_personalinformationid' } });
-    if (!personal.value?.length) return { error: 'Personal info not found' };
-    const employeeId = personal.value[0].ecom_personalinformationid;
-    const requestsRes = await dataverseRequest(minReq, 'get', 'ecom_employeeleaves', { params: { $filter: `_ecom_employee_value eq ${employeeId}`, $select: 'ecom_name,ecom_startdate,ecom_enddate,ecom_leavestatus', $orderby: 'createdon desc', $top: 10 } });
-    const requests = (requestsRes.value || []).map(r => ({ leave_type: r.ecom_name, start_date: r.ecom_startdate, end_date: r.ecom_enddate, status: r.ecom_leavestatus }));
-    return { requests };
-  } catch (e) {
-    fastify.log.error({ msg: 'getLeaveRequests failed', e: e.message });
-    return { error: 'Failed to fetch requests' };
-  }
-}
-
-async function getLeaveTypes() {
-  try {
-    const minReq = { headers: {}, session: { accessToken: await getAppLevelDataverseToken() } };
-    const leaveTypesData = await dataverseRequest(minReq, 'get', 'ecom_leavetypes', {
-      params: {
-        $filter: 'statecode eq 0',
-        $select: 'ecom_leavetypeid,ecom_name,ecom_quota',
-        $orderby: 'ecom_name asc'
-      }
-    });
-    return { leaveTypes: leaveTypesData.value || [] };
-  } catch (e) {
-    fastify.log.error({ msg: 'getLeaveTypes failed', e: e.message });
-    return { error: 'Failed to fetch leave types' };
-  }
-}
-
-async function getPosition(email) {
-  try {
-    const minReq = { headers: {}, session: { accessToken: await getAppLevelDataverseToken() }, user: { email } };
-    const userData = await dataverseRequest(minReq, 'get', 'ecom_personalinformations', {
-      params: {
-        $filter: `ecom_workemail eq '${email}'`,
-        $select: 'ecom_personalinformationid'
-      }
-    });
-    if (!userData.value?.length) return { error: 'Personal info not found' };
-
-    const personalInformationId = userData.value[0].ecom_personalinformationid;
-    const positionData = await dataverseRequest(minReq, 'get', 'ecom_employeepositions', {
-      params: {
-        $filter: `_ecom_personalinformation_value eq ${personalInformationId} and statecode eq 0`,
-        $select: 'ecom_startdate,ecom_grading,statecode',
-        $expand: 'ecom_JobTitle($select=ecom_jobtitle),ecom_UpdatedBy($select=fullname),ecom_PersonalInformation($select=ecom_employeename)',
-        $orderby: 'ecom_startdate desc',
-        $top: 1
-      }
-    });
-    if (!positionData.value?.length) return { error: 'No active position record found' };
-
-    const row = positionData.value[0];
-    return {
-      position_name: row.ecom_JobTitle?.ecom_jobtitle || null,
-      grade_code: row.ecom_grading,
-      grade_label: GRADE_MAP[row.ecom_grading] || 'Unknown',
-      status_code: row.statecode,
-      status_label: STATUS_MAP[row.statecode] || 'Unknown',
-      start_date: row.ecom_startdate
-    };
-  } catch (e) {
-    fastify.log.error({ msg: 'getPosition failed', e: e.message });
-    return { error: 'Failed to fetch position information' };
-  }
-}
-
-async function getDevelopments(email) {
-  try {
-    const minReq = { headers: {}, session: { accessToken: await getAppLevelDataverseToken() }, user: { email } };
-    const personalInfoRes = await dataverseRequest(minReq, 'get', 'ecom_personalinformations', {
-      params: {
-        $filter: `ecom_workemail eq '${email}'`,
-        $select: 'ecom_personalinformationid'
-      }
-    });
-    if (!personalInfoRes.value?.length) return { error: 'Personal info not found' };
-
-    const employeeGuid = personalInfoRes.value[0].ecom_personalinformationid;
-    const historyData = await dataverseRequest(minReq, 'get', 'ecom_developments', {
-      params: {
-        $filter: `_ecom_employeeid_value eq ${employeeGuid}`,
-        $select: 'ecom_developmentid,ecom_title,ecom_date,ecom_enddate,ecom_description,ecom_type,ecom_updatedon',
-        $expand: 'ecom_Client($select=name),ecom_ProjectManager($select=fullname)',
-        $orderby: 'ecom_date desc',
-        $top: 10
-      }
-    });
-
-    const items = (historyData.value || []).map((record) => ({
-      id: record.ecom_developmentid,
-      title: record.ecom_title,
-      type_code: record.ecom_type,
-      type_label: DEVELOPMENT_TYPE_MAP[record.ecom_type] || 'Unknown',
-      start_date: record.ecom_date,
-      end_date: record.ecom_enddate
-    }));
-    return { items };
-  } catch (e) {
-    fastify.log.error({ msg: 'getDevelopments failed', e: e.message });
-    return { error: 'Failed to fetch development history' };
-  }
-}
-
-async function getPeerReviewSummary(email) {
-  try {
-    const minReq = { headers: {}, session: { accessToken: await getAppLevelDataverseToken() }, user: { email } };
-    const userRes = await dataverseRequest(minReq, 'get', 'systemusers', {
-      params: {
-        $filter: `internalemailaddress eq '${email}'`,
-        $select: 'systemuserid'
-      }
-    });
-    if (!userRes.value?.length) return { error: 'User not found' };
-
-    const userId = userRes.value[0].systemuserid;
-    const summaryData = await dataverseRequest(minReq, 'get', 'ecom_summarypeerreviews', {
-      params: {
-        $filter: `_ecom_employee_value eq ${userId}`,
-        $select: 'ecom_startdate,ecom_enddate,ecom_totalpeerreview,ecom_averagerating',
-        $expand: 'ecom_Project($select=ecom_projectname),ecom_Employee($select=fullname)'
-      }
-    });
-
-    const items = (summaryData.value || []).map((item) => ({
-      project_name: item.ecom_Project?.ecom_projectname || null,
-      employee_name: item.ecom_Employee?.fullname || null,
-      project_start_date: item.ecom_startdate,
-      project_end_date: item.ecom_enddate,
-      total_peer_review: item.ecom_totalpeerreview,
-      average_rating: item.ecom_averagerating
-    }));
-    return { items };
-  } catch (e) {
-    fastify.log.error({ msg: 'getPeerReviewSummary failed', e: e.message });
-    return { error: 'Failed to fetch summary peer review' };
-  }
-}
-
-function parseSubmitLeaveCommand(rawMessage) {
-  const raw = String(rawMessage || '').trim();
-  const regex = /^ajukan\s+cuti\s+([0-9a-fA-F-]{36})\s+(\d{4}-\d{2}-\d{2})\s+(\d+)(?:\s+(.+))?$/i;
-  const m = raw.match(regex);
-  if (!m) return null;
-  return {
-    leaveTypeId: m[1],
-    startDate: m[2],
-    days: Number(m[3]),
-    reason: (m[4] || '').trim() || null,
+  // Transform Instagram DM to WhatsApp Cloud API (Meta) format expected by Pusaka/QLAR
+  const payload = {
+    object: 'whatsapp_business_account',
+    entry: [{
+      id: process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID || '0',
+      changes: [{
+        value: {
+          messaging_product: 'whatsapp',
+          metadata: {
+            display_phone_number: '6281280393537',
+            phone_number_id: '6281280393537'
+          },
+          contacts: [{
+            profile: { name: 'Instagram User' },
+            wa_id: String(senderId)
+          }],
+          messages: [{
+            from: String(senderId),
+            id: messageId,
+            timestamp,
+            text: { body: String(messageText || '') },
+            type: 'text'
+          }]
+        },
+        field: 'messages'
+      }]
+    }]
   };
-}
-
-async function submitLeaveRequestViaDm(email, rawMessage) {
-  const parsed = parseSubmitLeaveCommand(rawMessage);
-  if (!parsed) {
-    return {
-      ok: false,
-      error: 'format',
-      message: 'Format pengajuan: ajukan cuti <leaveTypeId> <YYYY-MM-DD> <jumlah_hari> <alasan(optional)>'
-    };
-  }
-
-  const { leaveTypeId, startDate, days, reason } = parsed;
-  if (!leaveTypeId || !startDate || !days) {
-    return { ok: false, message: 'leaveTypeId, startDate, dan days wajib diisi.' };
-  }
-
-  if (!Number.isInteger(days) || days <= 0) {
-    return { ok: false, message: 'Jumlah hari harus bilangan bulat positif.' };
-  }
-
-  let start;
-  try {
-    start = new Date(startDate);
-    const today = new Date();
-    today.setUTCHours(0, 0, 0, 0);
-    if (start < today) return { ok: false, message: 'Start date tidak boleh di masa lalu.' };
-
-    const dayOfWeek = start.getUTCDay();
-    if (dayOfWeek === 0 || dayOfWeek === 6) {
-      return { ok: false, message: `Start date ${startDate} jatuh di weekend.` };
-    }
-  } catch {
-    return { ok: false, message: 'Format tanggal tidak valid. Gunakan YYYY-MM-DD.' };
-  }
 
   try {
-    const minReq = {
-      headers: {},
-      session: { accessToken: await getAppLevelDataverseToken() },
-      user: { email, permission: getPermissionByEmail(email) }
-    };
+    const payloadString = JSON.stringify(payload);
+    const signature = pusakaSecret
+      ? `sha256=${crypto.createHmac('sha256', pusakaSecret).update(payloadString).digest('hex')}`
+      : '';
 
-    const leaveYear = start.getUTCFullYear().toString();
-    const personalInfoRes = await dataverseRequest(minReq, 'get', 'ecom_personalinformations', {
-      params: {
-        $filter: `ecom_workemail eq '${email}'`,
-        $select: 'ecom_personalinformationid,ecom_workemail,ecom_employeename,ecom_nik,ecom_dateofemployment'
-      }
+    fastify.log.info({ msg: 'Forwarding Instagram DM to Pusaka', senderId, messagePreview: String(messageText || '').substring(0, 80) });
+
+    const res = await axios.post(pusakaWebhookUrl, payload, {
+      headers: {
+        'Content-Type': 'application/json',
+        ...(signature && { 'X-Hub-Signature-256': signature }),
+        'X-Instagram-PSID': String(senderId),
+        'X-Reply-Url': callbackUrl
+      },
+      timeout: 20000
     });
 
-    if (!personalInfoRes.value?.length) {
-      return { ok: false, message: `Data personal tidak ditemukan untuk ${email}.` };
+    fastify.log.info({ msg: 'Pusaka webhook response', status: res.status, data: res.data });
+
+    // If Pusaka returns a synchronous reply in the response body, relay it immediately
+    const replyText = res.data?.reply || res.data?.message || res.data?.text || res.data?.response;
+    if (replyText && typeof replyText === 'string' && replyText.trim()) {
+      await sendInstagramMessage(senderId, replyText.trim(), process.env.INSTAGRAM_ACCESS_TOKEN);
     }
+    // Otherwise: Pusaka will POST async reply to /pusaka/reply
 
-    const employeeInfo = personalInfoRes.value.sort((a, b) =>
-      (b.ecom_employeename || '').localeCompare(a.ecom_employeename || '')
-    )[0];
-    const employeeGuid = employeeInfo.ecom_personalinformationid;
-
-    const balancesRes = await dataverseRequest(minReq, 'get', 'ecom_leaveusages', {
-      params: {
-        $filter: `_ecom_employee_value eq ${employeeGuid} and ecom_period eq '${leaveYear}'`,
-        $select: 'ecom_balance,_ecom_leavetype_value,ecom_period,ecom_name'
-      }
+  } catch (err) {
+    fastify.log.error({
+      msg: 'forwardToPusaka failed',
+      error: err.message,
+      status: err.response?.status,
+      data: err.response?.data
     });
-
-    if (!balancesRes.value?.length) {
-      return { ok: false, message: `Saldo cuti ${leaveYear} tidak ditemukan.` };
-    }
-
-    const usage = balancesRes.value.find((u) => u._ecom_leavetype_value === leaveTypeId);
-    if (!usage) {
-      return { ok: false, message: `Leave type ${leaveTypeId} tidak tersedia di saldo ${leaveYear}.` };
-    }
-
-    const currentBalance = usage.ecom_balance || 0;
-    if (currentBalance < days) {
-      return { ok: false, message: `Saldo tidak cukup. Available: ${currentBalance}, requested: ${days}.` };
-    }
-
-    const endDate = new Date(start);
-    let daysAdded = 0;
-    while (daysAdded < days - 1) {
-      endDate.setUTCDate(endDate.getUTCDate() + 1);
-      const d = endDate.getUTCDay();
-      if (d !== 0 && d !== 6) daysAdded++;
-    }
-    const endDateStr = endDate.toISOString().split('T')[0];
-    const returnDateStr = calculateReturnDate(endDateStr);
-
-    const overlapError = await checkForOverlappingLeave(minReq, employeeGuid, startDate, endDateStr);
-    if (overlapError) {
-      return { ok: false, message: `Tanggal cuti bentrok. ${overlapError}` };
-    }
-
-    const newLeaveRequest = {
-      'ecom_Employee@odata.bind': `/ecom_personalinformations(${employeeGuid})`,
-      'ecom_LeaveType@odata.bind': `/ecom_leavetypes(${leaveTypeId})`,
-      ecom_name: `${employeeInfo.ecom_nik} - ${employeeInfo.ecom_employeename} - Leave request`,
-      ecom_startdate: startDate,
-      ecom_enddate: endDateStr,
-      ecom_returndate: returnDateStr,
-      ecom_numberofdays: days,
-      ecom_reason: reason || null
-    };
-
-    const inserted = await dataverseRequest(minReq, 'post', 'ecom_employeeleaves', { data: newLeaveRequest });
-    const leaveId = inserted.ecom_employeeleaveid || inserted.ecom_leaverequestid;
-
-    try {
-      const [balanceThis, balanceNext] = await Promise.all([
-        dataverseRequest(minReq, 'get', 'ecom_leaveusages', {
-          params: {
-            $filter: `_ecom_employee_value eq ${employeeGuid} and ecom_period eq '${leaveYear}'`,
-            $select: 'ecom_leaveusageid'
-          }
-        }),
-        dataverseRequest(minReq, 'get', 'ecom_leaveusages', {
-          params: {
-            $filter: `_ecom_employee_value eq ${employeeGuid} and ecom_period eq '${parseInt(leaveYear, 10) + 1}'`,
-            $select: 'ecom_leaveusageid'
-          }
-        })
-      ]);
-
-      const thisBalanceId = balanceThis.value?.[0]?.ecom_leaveusageid;
-      const nextBalanceId = balanceNext.value?.[0]?.ecom_leaveusageid;
-      if (leaveId && (thisBalanceId || nextBalanceId)) {
-        await dataverseRequest(minReq, 'patch', `ecom_employeeleaves(${leaveId})`, {
-          data: {
-            ...(thisBalanceId && { 'ecom_LeaveBalanceThisPeriod@odata.bind': `/ecom_leaveusages(${thisBalanceId})` }),
-            ...(nextBalanceId && { 'ecom_LeaveBalanceNextPeriod@odata.bind': `/ecom_leaveusages(${nextBalanceId})` })
-          }
-        });
-      }
-    } catch (linkErr) {
-      fastify.log.error({ msg: 'DM leave: failed to link balances', e: linkErr.message });
-    }
-
-    try {
-      if (leaveId) {
-        await dataverseRequest(minReq, 'patch', `ecom_employeeleaves(${leaveId})`, {
-          data: {
-            ecom_totaldaysthisperiod: days,
-            ecom_totaldaysnextperiod: 0
-          }
-        });
-      }
-    } catch (numErr) {
-      fastify.log.error({ msg: 'DM leave: failed to set totalday fields', e: numErr.message });
-    }
-
-    try {
-      const userRes = await dataverseRequest(minReq, 'get', 'systemusers', {
-        params: {
-          $select: 'systemuserid,internalemailaddress',
-          $filter: `internalemailaddress eq '${email}'`
-        }
-      });
-
-      const systemUserId = userRes.value?.[0]?.systemuserid;
-      const flowUrl = process.env.POWERAPPS_FLOW_URL;
-      if (flowUrl && leaveId && systemUserId) {
-        await fetch(flowUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ leaveId, userId: systemUserId })
-        });
-      }
-    } catch (flowErr) {
-      fastify.log.error({ msg: 'DM leave: flow trigger failed', e: flowErr.message });
-    }
-
-    return {
-      ok: true,
-      leaveId,
-      leaveTypeName: usage.ecom_name || 'Unknown',
-      startDate,
-      endDate: endDateStr,
-      returnDate: returnDateStr,
-      days,
-      balanceRemaining: currentBalance - days
-    };
-  } catch (e) {
-    fastify.log.error({ msg: 'submitLeaveRequestViaDm failed', e: e.message, email, rawMessage });
-    return { ok: false, message: e.message || 'Gagal mengajukan cuti via DM.' };
+    await sendInstagramMessage(senderId, '⏳ Pesan Anda sedang diproses. Mohon tunggu sebentar.', process.env.INSTAGRAM_ACCESS_TOKEN)
+      .catch(() => {});
   }
 }
+
+
 
 // Verification endpoint (GET) for Facebook/Instagram webhook setup
 fastify.get('/instagram/webhook', async (req, reply) => {
@@ -1804,9 +1060,9 @@ fastify.post('/instagram/webhook', async (req, reply) => {
               messageText
             });
 
-            await handleInstagramMessage(senderId, messageText)
+            await forwardToPusaka(senderId, messageText)
               .catch(err => fastify.log.error({
-                msg: 'handleInstagramMessage failed',
+                msg: 'forwardToPusaka failed',
                 err: err.message
               }));
           }
@@ -1833,9 +1089,9 @@ fastify.post('/instagram/webhook', async (req, reply) => {
         messageText
       });
 
-      await handleInstagramMessage(senderId, messageText)
+      await forwardToPusaka(senderId, messageText)
         .catch(err => fastify.log.error({
-          msg: 'handleInstagramMessage failed',
+          msg: 'forwardToPusaka failed',
           err: err.message
         }));
     }
@@ -1857,162 +1113,29 @@ return reply.code(200).send({ status: 'received' });
 }
 });
 
-async function handleInstagramMessage(senderId, messageText) {
-  let responseText = '⏳ Sedang memproses permintaan Anda...'; // Initial response
+// ==============================
+// 🔹 Pusaka/QLAR callback: relay AI reply to Instagram user
+// ==============================
+fastify.post('/pusaka/reply', async (req, reply) => {
+  const body = req.body || {};
+  const senderId = body.psid || body.instagram_psid || req.headers['x-instagram-psid'];
+  const messageText = body.text || body.message || body.reply || body.response;
 
-  try {
-    fastify.log.info({ msg: 'handleInstagramMessage started', senderId, messageText });
-    fastify.log.info({ msg: 'DEBUG: before getPSIDUserMapping' });
-    let userMapping = await getPSIDUserMapping(senderId);
-    let userEmail = userMapping?.email || null;
-    fastify.log.info({ msg: 'DEBUG: after getPSIDUserMapping', userMapping });
-    const { intent, params } = parseIntent(messageText);
-    fastify.log.info({ msg: 'DEBUG: after parseIntent', intent, params });
-    fastify.log.info({ msg: 'intent parsed', intent, senderId, mapped: !!userEmail });
-
-    // User's requested logic for initial responseText update
-    if (!userEmail) {
-      responseText = 'Silakan login dulu...';
-    } else {
-      responseText = 'Data Anda sedang diproses...';
-    }
-
-    // --- Start of original logic, now modifying responseText instead of sending directly ---
-
-    // If sensitive actions require mapping/email, prompt user
-    if ((
-      intent === 'submit_leave' ||
-      intent === 'check_leave_balance' ||
-      intent === 'get_profile' ||
-      intent === 'get_leave_requests' ||
-      intent === 'get_position' ||
-      intent === 'get_developments' ||
-      intent === 'get_peer_review_summary' ||
-      intent === 'admin_query'
-    ) && !userEmail) {
-      responseText = 'ℹ️ Untuk akses data, klik link ini untuk login: https://ecomate-phi.vercel.app/login\n\nSetelah login, salin OTP dari browser dan kirim ke sini.';
-      // No return here, will send at the end
-    }
-    // If user sends OTP (6 digits)
-    else if (messageText.match(/^\d{6}$/)) { // Use else if to prevent multiple branches from executing
-      const otp = messageText;
-      try {
-        const jwt = await kv.get(otp);
-        if (jwt) {
-          const decoded = fastify.jwt.verify(jwt);
-          const mappedUser = {
-            email: decoded.email,
-            permission: decoded.permission || getPermissionByEmail(decoded.email),
-            employeeId: decoded.employeeId || null
-          };
-          await setPSIDUserMapping(senderId, mappedUser);
-          const email = mappedUser.email;
-          responseText = `✅ Login berhasil! Email: ${email}\n\nSekarang coba: cek cuti, data, riwayat`;
-        } else {
-          responseText = '❌ OTP tidak valid atau sudah expired. Coba login lagi.';
-        }
-      } catch (e) {
-        fastify.log.error({ msg: 'OTP validation failed', e: e.message });
-        responseText = '❌ Terjadi kesalahan saat validasi OTP.';
-      }
-    }
-    // If user sends an email to map (fallback, but now prefer OTP)
-    else if (intent === 'unknown' && messageText.includes('@') && messageText.includes('.')) { // Use else if
-      const potentialEmail = messageText.trim();
-      try {
-        const minReq = { headers: {}, session: { accessToken: await getAppLevelDataverseToken() } };
-        const res = await dataverseRequest(minReq, 'get', 'ecom_personalinformations', { params: { $filter: `ecom_workemail eq '${potentialEmail}'`, $select: 'ecom_personalinformationid,ecom_employeename' } });
-        if (res.value && res.value.length) {
-          await setPSIDUserMapping(senderId, {
-            email: potentialEmail,
-            permission: getPermissionByEmail(potentialEmail),
-            employeeId: res.value[0].ecom_personalinformationid || null
-          });
-          responseText = `✅ Email terverifikasi: ${potentialEmail}\n\nSekarang coba: cek cuti, data, riwayat`;
-        } else {
-          responseText = '❌ Email tidak ditemukan di sistem. Pastikan email kerja Anda.';
-        }
-      } catch (e) {
-        fastify.log.error({ msg: 'validate email failed', e: e.message });
-        responseText = '❌ Email tidak ditemukan di sistem. Pastikan email kerja Anda.'; // Fallback for error
-      }
-    }
-    // Handle other intents
-    else {
-      let responseData = {};
-      switch (intent) {
-        case 'help':
-          responseData = { action: 'help' };
-          break;
-        case 'login':
-          responseData = { action: 'login' };
-          break;
-        case 'submit_leave':
-          if (userEmail) {
-            responseData = await submitLeaveRequestViaDm(userEmail, messageText);
-          } else {
-            responseData = {
-              ok: false,
-              message: 'Silakan login dulu sebelum mengajukan cuti.'
-            };
-          }
-          break;
-        case 'get_leave_types':
-          responseData = await getLeaveTypes();
-          break;
-        case 'check_leave_balance':
-          if (userEmail) responseData = await getLeaveBalance(userEmail);
-          break;
-        case 'get_profile':
-          if (userEmail) responseData = await getProfile(userEmail);
-          break;
-        case 'get_position':
-          if (userEmail) responseData = await getPosition(userEmail);
-          break;
-        case 'get_leave_requests':
-          if (userEmail) responseData = await getLeaveRequests(userEmail);
-          break;
-        case 'get_developments':
-          if (userEmail) responseData = await getDevelopments(userEmail);
-          break;
-        case 'get_peer_review_summary':
-          if (userEmail) responseData = await getPeerReviewSummary(userEmail);
-          break;
-        case 'admin_query':
-          responseData = await handleAdminQuery(userMapping, params);
-          break;
-        default:
-          responseData = { action: 'unknown' };
-      }
-      responseText = formatInstagramResponse(responseData, intent);
-    }
-
-    fastify.log.info({ msg: 'instagram reply prepared', senderId, intent });
-
-  } catch (e) {
-    fastify.log.error({ msg: 'handleInstagramMessage unexpected', e: e.message });
-    responseText = '❌ Terjadi error internal.';
+  if (!senderId || !messageText) {
+    fastify.log.warn({ msg: 'pusaka/reply: missing psid or text', body });
+    return reply.code(400).send({ error: 'psid (or instagram_psid) and text are required' });
   }
 
-  fastify.log.info({ msg: 'Final Instagram message prepared', senderId, responseText: responseText.substring(0, 50) + '...' });
-  // Send the final responseText
-  await sendInstagramMessage(senderId, responseText, process.env.INSTAGRAM_ACCESS_TOKEN);
-}
+  fastify.log.info({ msg: 'pusaka/reply: relaying AI response to Instagram', senderId, messagePreview: String(messageText).substring(0, 80) });
 
-const EmojiMap = {
-  help: '📌',
-  login: '🔐',
-  get_leave_types: '🗂️',
-  check_leave_balance: '📅',
-  get_profile: '👤',
-  get_position: '🧭',
-  get_leave_requests: '📋',
-  get_developments: '🚀',
-  get_peer_review_summary: '⭐'
-};
+  await sendInstagramMessage(String(senderId), String(messageText), process.env.INSTAGRAM_ACCESS_TOKEN)
+    .catch(err => fastify.log.error({ msg: 'pusaka/reply: sendInstagramMessage failed', error: err.message }));
+
+  return reply.code(200).send({ status: 'sent' });
+});
 
 console.log("JWT_SECRET:", process.env.JWT_SECRET ? "Loaded" : "Not Found - Using Default");
-console.log("ADMIN_EMAILS:", process.env.ADMIN_EMAILS);
+
 
 // ==============================
 // 🔹 Start server
