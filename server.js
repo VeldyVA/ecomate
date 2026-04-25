@@ -858,6 +858,7 @@ function parseIntent(messageText) {
   if (text.startsWith('admin ')) {
     return { intent: 'admin_query', params: parseAdminCommand(messageText) };
   }
+  if (text.startsWith('pilih cuti')) return { intent: 'submit_leave', params: { raw_message: messageText } };
   if (text === 'help' || text === 'bantuan' || text === 'menu') return { intent: 'help', params: {} };
   if (text.includes('login') || text.includes('masuk')) return { intent: 'login', params: {} };
   if (text.includes('jenis cuti') || text.includes('tipe cuti') || text.includes('leave type')) return { intent: 'get_leave_types', params: {} };
@@ -965,6 +966,8 @@ function formatInstagramResponse(data, intent) {
         '- posisi / jabatan',
         '- cek cuti / saldo',
         '- tipe cuti',
+        '- ajukan cuti <tanggal> (contoh: ajukan cuti 27 april 2026)',
+        '- pilih cuti <nomor> <jumlah_hari> <alasan(optional)>',
         '- riwayat',
         '- development',
         '- peer review',
@@ -1074,7 +1077,27 @@ function formatInstagramResponse(data, intent) {
       }
       break;
     case 'submit_leave':
-      if (data.ok) {
+      if (data.action === 'select_leave_type') {
+        const items = Array.isArray(data.leaveTypes) ? data.leaveTypes : [];
+        if (!items.length) {
+          response = '❌ Jenis cuti tidak ditemukan saat ini. Coba lagi nanti.';
+          break;
+        }
+        response = [
+          `📝 Tanggal mulai cuti: ${data.startDate || '-'}`,
+          'Pilih jenis cuti dengan balas:',
+          'pilih cuti <nomor> <jumlah_hari> <alasan(optional)>',
+          '',
+          'Contoh: pilih cuti 1 2 urusan keluarga',
+          '',
+          'Daftar jenis cuti:'
+        ].join('\n');
+
+        items.slice(0, 12).forEach((t, i) => {
+          const quota = t.ecom_quota == null ? '-' : t.ecom_quota;
+          response += `\n${i + 1}. ${t.ecom_name} (kuota: ${quota})`;
+        });
+      } else if (data.ok) {
         response = [
           '✅ Pengajuan cuti berhasil dibuat.',
           `Leave ID: ${data.leaveId || '-'}`,
@@ -1125,6 +1148,31 @@ async function setPSIDUserMapping(psid, userData, ttl = 2592000) { // 30 days
     await kv.setex(`instagram:psid:${psid}`, ttl, userData);
   } catch (e) {
     fastify.log.error({ msg: 'kv.setex failed', e: e.message });
+  }
+}
+
+async function getLeaveDraft(psid) {
+  try {
+    return await kv.get(`instagram:leave-draft:${psid}`);
+  } catch (e) {
+    fastify.log.error({ msg: 'getLeaveDraft failed', e: e.message });
+    return null;
+  }
+}
+
+async function setLeaveDraft(psid, draft, ttl = 3600) { // 1 hour
+  try {
+    await kv.setex(`instagram:leave-draft:${psid}`, ttl, draft);
+  } catch (e) {
+    fastify.log.error({ msg: 'setLeaveDraft failed', e: e.message });
+  }
+}
+
+async function clearLeaveDraft(psid) {
+  try {
+    await kv.del(`instagram:leave-draft:${psid}`);
+  } catch (e) {
+    fastify.log.error({ msg: 'clearLeaveDraft failed', e: e.message });
   }
 }
 
@@ -1546,30 +1594,154 @@ async function getPeerReviewSummary(email) {
   }
 }
 
-function parseSubmitLeaveCommand(rawMessage) {
-  const raw = String(rawMessage || '').trim();
-  const regex = /^ajukan\s+cuti\s+([0-9a-fA-F-]{36})\s+(\d{4}-\d{2}-\d{2})\s+(\d+)(?:\s+(.+))?$/i;
-  const m = raw.match(regex);
-  if (!m) return null;
-  return {
-    leaveTypeId: m[1],
-    startDate: m[2],
-    days: Number(m[3]),
-    reason: (m[4] || '').trim() || null,
-  };
+function toIsoDate(y, m, d) {
+  const yy = Number(y);
+  const mm = Number(m);
+  const dd = Number(d);
+  if (!Number.isInteger(yy) || !Number.isInteger(mm) || !Number.isInteger(dd)) return null;
+  if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
+  const date = new Date(Date.UTC(yy, mm - 1, dd));
+  if (date.getUTCFullYear() !== yy || date.getUTCMonth() + 1 !== mm || date.getUTCDate() !== dd) return null;
+  return `${yy}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
 }
 
-async function submitLeaveRequestViaDm(email, rawMessage) {
+function parseFlexibleDateFromText(text) {
+  const raw = String(text || '').trim().toLowerCase();
+
+  let m = raw.match(/\b(\d{4})[\-\/.](\d{1,2})[\-\/.](\d{1,2})\b/);
+  if (m) return toIsoDate(m[1], m[2], m[3]);
+
+  m = raw.match(/\b(\d{1,2})[\-\/.](\d{1,2})[\-\/.](\d{4})\b/);
+  if (m) return toIsoDate(m[3], m[2], m[1]);
+
+  const monthMap = {
+    januari: 1, january: 1,
+    februari: 2, february: 2, feb: 2,
+    maret: 3, march: 3,
+    april: 4,
+    mei: 5, may: 5,
+    juni: 6, june: 6,
+    juli: 7, july: 7,
+    agustus: 8, august: 8,
+    september: 9,
+    oktober: 10, october: 10,
+    november: 11,
+    desember: 12, december: 12
+  };
+
+  m = raw.match(/\b(\d{1,2})\s+([a-zA-Z]+)\s+(\d{4})\b/);
+  if (m) {
+    const month = monthMap[m[2]];
+    if (!month) return null;
+    return toIsoDate(m[3], month, m[1]);
+  }
+
+  return null;
+}
+
+function parseSubmitLeaveCommand(rawMessage) {
+  const raw = String(rawMessage || '').trim();
+
+  // Step 2 flow: choose leave type by option number
+  let m = raw.match(/^pilih\s+cuti\s+(\d+)(?:\s+(\d+))?(?:\s+(.+))?$/i);
+  if (m) {
+    return {
+      mode: 'select_type',
+      optionIndex: Number(m[1]),
+      days: Number(m[2] || 1),
+      reason: (m[3] || '').trim() || null,
+    };
+  }
+
+  // Legacy full command (backward compatible)
+  m = raw.match(/^ajukan\s+cuti\s+([0-9a-fA-F-]{36})\s+(\d{4}-\d{2}-\d{2})\s+(\d+)(?:\s+(.+))?$/i);
+  if (m) {
+    return {
+      mode: 'legacy_full',
+      leaveTypeId: m[1],
+      startDate: m[2],
+      days: Number(m[3]),
+      reason: (m[4] || '').trim() || null,
+    };
+  }
+
+  // Simplified command: user only sends start date
+  if (/^ajukan\s+cuti\b/i.test(raw)) {
+    const startDate = parseFlexibleDateFromText(raw);
+    if (!startDate) return null;
+    return { mode: 'need_type', startDate };
+  }
+
+  return null;
+}
+
+async function submitLeaveRequestViaDm(email, rawMessage, senderId = null) {
   const parsed = parseSubmitLeaveCommand(rawMessage);
   if (!parsed) {
     return {
       ok: false,
       error: 'format',
-      message: 'Format pengajuan: ajukan cuti <leaveTypeId> <YYYY-MM-DD> <jumlah_hari> <alasan(optional)>'
+      message: 'Gunakan format sederhana: ajukan cuti <tanggal>. Contoh: ajukan cuti 27 april 2026'
     };
   }
 
-  const { leaveTypeId, startDate, days, reason } = parsed;
+  let leaveTypeId;
+  let startDate;
+  let days;
+  let reason;
+
+  if (parsed.mode === 'need_type') {
+    const leaveTypeData = await getLeaveTypes();
+    const leaveTypes = leaveTypeData.leaveTypes || [];
+    if (!leaveTypes.length) {
+      return { ok: false, message: 'Jenis cuti tidak ditemukan saat ini.' };
+    }
+
+    if (senderId) {
+      await setLeaveDraft(senderId, {
+        email,
+        startDate: parsed.startDate,
+        options: leaveTypes.map((t) => ({
+          leaveTypeId: t.ecom_leavetypeid,
+          ecom_name: t.ecom_name,
+          ecom_quota: t.ecom_quota
+        }))
+      });
+    }
+
+    return {
+      ok: false,
+      action: 'select_leave_type',
+      startDate: parsed.startDate,
+      leaveTypes
+    };
+  }
+
+  if (parsed.mode === 'select_type') {
+    if (!senderId) {
+      return { ok: false, message: 'Ketik dulu: ajukan cuti <tanggal>.' };
+    }
+    const draft = await getLeaveDraft(senderId);
+    if (!draft || !Array.isArray(draft.options) || !draft.options.length) {
+      return { ok: false, message: 'Sesi pengajuan tidak ditemukan. Ulangi: ajukan cuti <tanggal>.' };
+    }
+
+    const idx = parsed.optionIndex - 1;
+    if (idx < 0 || idx >= draft.options.length) {
+      return { ok: false, message: `Nomor jenis cuti tidak valid. Pilih 1 sampai ${draft.options.length}.` };
+    }
+
+    leaveTypeId = draft.options[idx].leaveTypeId;
+    startDate = draft.startDate;
+    days = parsed.days;
+    reason = parsed.reason;
+  } else {
+    leaveTypeId = parsed.leaveTypeId;
+    startDate = parsed.startDate;
+    days = parsed.days;
+    reason = parsed.reason;
+  }
+
   if (!leaveTypeId || !startDate || !days) {
     return { ok: false, message: 'leaveTypeId, startDate, dan days wajib diisi.' };
   }
@@ -1744,6 +1916,10 @@ async function submitLeaveRequestViaDm(email, rawMessage) {
   } catch (e) {
     fastify.log.error({ msg: 'submitLeaveRequestViaDm failed', e: e.message, email, rawMessage });
     return { ok: false, message: e.message || 'Gagal mengajukan cuti via DM.' };
+  } finally {
+    if (senderId && parsed.mode === 'select_type') {
+      await clearLeaveDraft(senderId);
+    }
   }
 }
 
@@ -1949,7 +2125,7 @@ async function handleInstagramMessage(senderId, messageText) {
           break;
         case 'submit_leave':
           if (userEmail) {
-            responseData = await submitLeaveRequestViaDm(userEmail, messageText);
+            responseData = await submitLeaveRequestViaDm(userEmail, messageText, senderId);
           } else {
             responseData = {
               ok: false,
