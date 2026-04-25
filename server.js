@@ -949,13 +949,49 @@ function parseAdminCommand(messageText) {
   return { action: 'unknown', raw };
 }
 
-async function sendInstagramMessage(recipientId, messageText, accessToken) {
-  const token = (accessToken || process.env.INSTAGRAM_ACCESS_TOKEN || '').trim();
-  if (!token) {
-    fastify.log.error({ msg: 'INSTAGRAM_ACCESS_TOKEN is missing. Cannot send message.' });
-    return null;
+function splitInstagramMessage(messageText, maxLen = 1000) {
+  const text = String(messageText || '');
+  if (!text || text.length <= maxLen) return [text];
+
+  const lines = text.split('\n');
+  const chunks = [];
+  let current = '';
+
+  const flush = () => {
+    if (current) {
+      chunks.push(current);
+      current = '';
+    }
+  };
+
+  for (const line of lines) {
+    const candidate = current ? `${current}\n${line}` : line;
+    if (candidate.length <= maxLen) {
+      current = candidate;
+      continue;
+    }
+
+    flush();
+
+    if (line.length <= maxLen) {
+      current = line;
+      continue;
+    }
+
+    // Handle a single very long line by slicing it into safe chunks.
+    let remaining = line;
+    while (remaining.length > maxLen) {
+      chunks.push(remaining.slice(0, maxLen));
+      remaining = remaining.slice(maxLen);
+    }
+    current = remaining;
   }
 
+  flush();
+  return chunks.length ? chunks : [text];
+}
+
+async function sendInstagramMessageChunk(recipientId, messageText, token) {
   const endpoint = 'https://graph.instagram.com/v25.0/me/messages';
   const payload = {
     recipient: { id: String(recipientId) },
@@ -968,7 +1004,8 @@ async function sendInstagramMessage(recipientId, messageText, accessToken) {
       endpoint,
       recipientId: String(recipientId),
       messagePreview: String(messageText || '').substring(0, 50),
-      tokenPrefix: token.substring(0, 6)
+      tokenPrefix: token.substring(0, 6),
+      messageLength: String(messageText || '').length
     });
 
     // Primary request format: Authorization Bearer header (same as tested curl).
@@ -1011,6 +1048,39 @@ async function sendInstagramMessage(recipientId, messageText, accessToken) {
       throw fallbackErr;
     }
   }
+}
+
+async function sendInstagramMessage(recipientId, messageText, accessToken) {
+  const token = (accessToken || process.env.INSTAGRAM_ACCESS_TOKEN || '').trim();
+  if (!token) {
+    fastify.log.error({ msg: 'INSTAGRAM_ACCESS_TOKEN is missing. Cannot send message.' });
+    return null;
+  }
+
+  const chunks = splitInstagramMessage(messageText, 1000);
+  if (chunks.length > 1) {
+    fastify.log.info({
+      msg: 'Splitting Instagram message into chunks',
+      recipientId: String(recipientId),
+      chunkCount: chunks.length,
+      originalLength: String(messageText || '').length
+    });
+  }
+
+  const responses = [];
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    fastify.log.info({
+      msg: 'Sending Instagram message chunk',
+      recipientId: String(recipientId),
+      chunkIndex: i + 1,
+      chunkCount: chunks.length,
+      chunkLength: chunk.length
+    });
+    const res = await sendInstagramMessageChunk(recipientId, chunk, token);
+    responses.push(res);
+  }
+  return responses[responses.length - 1] || null;
 }
 
 function formatInstagramResponse(data, intent) {
