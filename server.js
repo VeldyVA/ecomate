@@ -881,7 +881,6 @@ function parseIntent(messageText) {
 
 function parseAdminCommand(messageText) {
   const raw = (messageText || '').trim();
-  const text = raw.toLowerCase();
 
   const withCriteria = /^admin\s+(profile|saldo|position|developments?|review|peer\s*review)\s+(.+)$/i.exec(raw);
   if (withCriteria) {
@@ -895,11 +894,53 @@ function parseAdminCommand(messageText) {
     const arg = (leaveCmd[2] || '').trim();
     if (!arg) return { action: 'leave_requests' };
 
-    const periodMatch = arg.match(/\b(20\d{2}(?:-\d{2})?)\b/);
-    const period = periodMatch ? periodMatch[1] : null;
+    const monthMap = {
+      januari: '01', january: '01', jan: '01',
+      februari: '02', february: '02', feb: '02',
+      maret: '03', march: '03', mar: '03',
+      april: '04', apr: '04',
+      mei: '05', may: '05',
+      juni: '06', june: '06', jun: '06',
+      juli: '07', july: '07', jul: '07',
+      agustus: '08', august: '08', agu: '08', aug: '08',
+      september: '09', sep: '09', sept: '09',
+      oktober: '10', october: '10', okt: '10', oct: '10',
+      november: '11', nov: '11',
+      desember: '12', december: '12', des: '12', dec: '12'
+    };
+
+    let period = null;
     let name = arg;
-    if (period) name = name.replace(period, ' ');
-    name = name.replace(/\b(period|periode|tahun|month|bulan)\b/gi, ' ').replace(/\s+/g, ' ').trim();
+
+    const monthYearMatch = arg.match(/\b([a-zA-Z]+)\s+(20\d{2})\b/i);
+    if (monthYearMatch) {
+      const month = monthMap[monthYearMatch[1].toLowerCase()];
+      if (month) {
+        period = `${monthYearMatch[2]}-${month}`;
+        name = name.replace(monthYearMatch[0], ' ');
+      }
+    }
+
+    if (!period) {
+      const ymMatch = arg.match(/\b(20\d{2})-(\d{1,2})\b/);
+      if (ymMatch) {
+        const mm = Number(ymMatch[2]);
+        if (mm >= 1 && mm <= 12) {
+          period = `${ymMatch[1]}-${String(mm).padStart(2, '0')}`;
+          name = name.replace(ymMatch[0], ' ');
+        }
+      }
+    }
+
+    if (!period) {
+      const yearMatch = arg.match(/\b(20\d{2})\b/);
+      if (yearMatch) {
+        period = yearMatch[1];
+        name = name.replace(yearMatch[0], ' ');
+      }
+    }
+
+    name = name.replace(/\b(period|periode|tahun|month|bulan|di|pada)\b/gi, ' ').replace(/\s+/g, ' ').trim();
     if (!name || /^(all|semua)$/i.test(name)) name = null;
 
     return { action: 'leave_requests', name, period };
@@ -1013,7 +1054,9 @@ function formatInstagramResponse(data, intent) {
         '- admin position <nama>',
         '- admin development <nama>',
         '- admin review <nama>',
-        '- admin cuti [nama] [periode: YYYY atau YYYY-MM]'
+        '- admin cuti april 2026',
+        '- admin cuti veldy april 2026',
+        '- admin cuti veldy 2026'
       ].join('\n');
       break;
     case 'login':
@@ -1515,11 +1558,13 @@ async function handleAdminQuery(userMapping, params) {
 
     if (action === 'leave_requests') {
       const filters = [];
+      const descriptor = [];
 
       if (params?.name) {
         const employeeId = await resolveEmployeeIdForAdmin(minReq, 'name', params.name);
         if (!employeeId) return { adminText: '❌ Karyawan tidak ditemukan untuk pencarian cuti.' };
         filters.push(`_ecom_employee_value eq ${employeeId}`);
+        descriptor.push(`nama: ${params.name}`);
       }
 
       if (params?.period) {
@@ -1527,6 +1572,7 @@ async function handleAdminQuery(userMapping, params) {
         if (/^20\d{2}$/.test(p)) {
           filters.push(`ecom_enddate ge ${p}-01-01`);
           filters.push(`ecom_startdate le ${p}-12-31`);
+          descriptor.push(`periode: ${p}`);
         } else if (/^20\d{2}-\d{2}$/.test(p)) {
           const [yy, mm] = p.split('-').map(Number);
           const last = new Date(yy, mm, 0).getDate();
@@ -1534,6 +1580,8 @@ async function handleAdminQuery(userMapping, params) {
           const end = `${yy}-${String(mm).padStart(2, '0')}-${String(last).padStart(2, '0')}`;
           filters.push(`ecom_enddate ge ${start}`);
           filters.push(`ecom_startdate le ${end}`);
+          const monthNames = ['januari', 'februari', 'maret', 'april', 'mei', 'juni', 'juli', 'agustus', 'september', 'oktober', 'november', 'desember'];
+          descriptor.push(`periode: ${monthNames[mm - 1]} ${yy}`);
         }
       }
 
@@ -1541,15 +1589,16 @@ async function handleAdminQuery(userMapping, params) {
         $select: 'ecom_name,ecom_startdate,ecom_enddate,ecom_leavestatus,createdon',
         $expand: 'ecom_Employee($select=ecom_employeename),ecom_LeaveType($select=ecom_name)',
         $orderby: 'createdon desc',
-        $top: 10
+        $top: 50
       };
       if (filters.length) query.$filter = filters.join(' and ');
 
       const list = await dataverseRequest(minReq, 'get', 'ecom_employeeleaves', { params: query });
       const rows = list.value || [];
       if (!rows.length) return { adminText: '✅ Tidak ada data cuti.' };
+      const titleFilter = descriptor.length ? ` (${descriptor.join(', ')})` : ' (terbaru)';
       return {
-        adminText: `📋 Leave Requests (terbaru)\n${rows.map((r) => `- ${r.ecom_Employee?.ecom_employeename || '-'} | ${r.ecom_LeaveType?.ecom_name || r.ecom_name || '-'} | ${r.ecom_startdate || '-'} s/d ${r.ecom_enddate || '-'} | status ${r.ecom_leavestatus ?? '-'}`).join('\n')}`
+        adminText: `📋 Leave Requests${titleFilter}\n${rows.map((r) => `- ${r.ecom_Employee?.ecom_employeename || '-'} | ${r.ecom_LeaveType?.ecom_name || r.ecom_name || '-'} | ${r.ecom_startdate || '-'} s/d ${r.ecom_enddate || '-'} | status ${r.ecom_leavestatus ?? '-'}`).join('\n')}`
       };
     }
 
