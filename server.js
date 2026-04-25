@@ -963,31 +963,26 @@ async function forwardToPusaka(senderId, messageText) {
   };
 
   try {
+    // Serialize to string first so the HMAC is computed on the exact bytes we send
     const payloadString = JSON.stringify(payload);
+    const bodyBuffer = Buffer.from(payloadString, 'utf8');
 
-    // Build auth headers — try all common patterns since Pusaka docs are not public
+    // Build auth headers — Pusaka MetaCloud webhook verifies Meta-style HMAC signature
     const extraHeaders = {};
-    const queryParams = {};
     if (pusakaSecret) {
-      // Pattern 1: Bearer token (most common for REST webhooks)
-      extraHeaders['Authorization'] = `Bearer ${pusakaSecret}`;
-      // Pattern 2: HMAC SHA256 (Meta/WhatsApp Cloud format)
-      extraHeaders['X-Hub-Signature-256'] = `sha256=${crypto.createHmac('sha256', pusakaSecret).update(payloadString).digest('hex')}`;
-      // Pattern 3: HMAC SHA1 (older Meta format)
-      extraHeaders['X-Hub-Signature'] = `sha1=${crypto.createHmac('sha1', pusakaSecret).update(payloadString).digest('hex')}`;
-      // Pattern 4: token in query string
-      queryParams.token = pusakaSecret;
+      // Meta WhatsApp Cloud API webhook format: HMAC-SHA256 of raw body bytes
+      extraHeaders['X-Hub-Signature-256'] = `sha256=${crypto.createHmac('sha256', pusakaSecret).update(bodyBuffer).digest('hex')}`;
+      // Older Meta format (SHA1)
+      extraHeaders['X-Hub-Signature'] = `sha1=${crypto.createHmac('sha1', pusakaSecret).update(bodyBuffer).digest('hex')}`;
     }
-
-    const urlWithParams = Object.keys(queryParams).length
-      ? `${pusakaWebhookUrl}?${new URLSearchParams(queryParams).toString()}`
-      : pusakaWebhookUrl;
 
     fastify.log.info({ msg: 'Forwarding Instagram DM to Pusaka', senderId, messagePreview: String(messageText || '').substring(0, 80) });
 
-    const res = await axios.post(urlWithParams, payload, {
+    // Send the raw buffer so the body bytes match what was signed
+    const res = await axios.post(pusakaWebhookUrl, bodyBuffer, {
       headers: {
         'Content-Type': 'application/json',
+        'Content-Length': bodyBuffer.length,
         ...extraHeaders,
         'X-Instagram-PSID': String(senderId),
         'X-Reply-Url': callbackUrl
