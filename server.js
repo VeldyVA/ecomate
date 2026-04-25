@@ -498,6 +498,16 @@ async function dataverseRequest(req, method, entitySet, options = {}) {
     headers['Prefer'] = 'return=representation';
   }
 
+  if (options.headers && typeof options.headers === 'object') {
+    for (const [k, v] of Object.entries(options.headers)) {
+      if (k.toLowerCase() === 'prefer' && headers['Prefer']) {
+        headers['Prefer'] = `${headers['Prefer']},${v}`;
+      } else {
+        headers[k] = v;
+      }
+    }
+  }
+
   const res = await axios({
     method,
     url: `${dataverseBaseUrl}/api/data/v9.2/${entitySet}`,
@@ -508,6 +518,10 @@ async function dataverseRequest(req, method, entitySet, options = {}) {
 
   return res.data;
 }
+
+const DATAVERSE_FORMATTED_VALUE_HEADERS = {
+  Prefer: 'odata.include-annotations="OData.Community.Display.V1.FormattedValue"'
+};
 
 // ==============================
 // 🔹 Nodemailer (SMTP Office 365/Gmail)
@@ -1083,6 +1097,27 @@ async function sendInstagramMessage(recipientId, messageText, accessToken) {
   return responses[responses.length - 1] || null;
 }
 
+function getDataverseFormattedValue(record, fieldName) {
+  if (!record || !fieldName) return null;
+  const key = `${fieldName}@OData.Community.Display.V1.FormattedValue`;
+  const val = record[key];
+  if (val === null || val === undefined) return null;
+  const txt = String(val).trim();
+  return txt || null;
+}
+
+function toProfileDisplayValue(record, fieldName) {
+  return getDataverseFormattedValue(record, fieldName) || record?.[fieldName];
+}
+
+function toLeaveStatusLabel(record) {
+  if (!record) return '-';
+  const formatted = getDataverseFormattedValue(record, 'ecom_leavestatus');
+  if (formatted) return formatted;
+  const mapped = LeaveStatus?.[record.ecom_leavestatus]?.id;
+  return mapped || record.ecom_leavestatus || '-';
+}
+
 function formatInstagramResponse(data, intent) {
   const normalizeDateText = (input) => {
     let text = String(input || '');
@@ -1183,11 +1218,11 @@ function formatInstagramResponse(data, intent) {
           ['Email Personal', profile.ecom_personalemail],
           ['NIK', profile.ecom_nik],
           ['No HP', profile.ecom_phonenumber],
-          ['Gender', profile.ecom_gender],
+          ['Gender', toProfileDisplayValue(profile, 'ecom_gender')],
           ['Tanggal Lahir', profile.ecom_dateofbirth],
           ['Tempat Lahir', profile.ecom_placeofbirth],
-          ['Agama', profile.ecom_religion],
-          ['Status Menikah', profile.ecom_maritalstatus],
+          ['Agama', toProfileDisplayValue(profile, 'ecom_religion')],
+          ['Status Menikah', toProfileDisplayValue(profile, 'ecom_maritalstatus')],
           ['Jumlah Tanggungan', profile.ecom_numberofdependent],
           ['Alamat', profile.ecom_address],
           ['Jabatan', profile.ecom_jobtitle],
@@ -1226,7 +1261,7 @@ function formatInstagramResponse(data, intent) {
     case 'get_leave_requests':
       if (data.requests && data.requests.length) {
         response = '📋 Riwayat Cuti:\n';
-        data.requests.slice(0,5).forEach(r => { response += `${r.leave_type}: ${r.start_date} → ${r.end_date} [${r.status}]\n`; });
+        data.requests.slice(0,5).forEach(r => { response += `${r.leave_type}: ${r.start_date} → ${r.end_date} [${r.status_label || r.status}]\n`; });
       } else response = '✅ Tidak ada riwayat cuti.';
       break;
     case 'get_developments':
@@ -1400,6 +1435,7 @@ async function getProfile(email) {
   try {
     const minReq = { headers: {}, session: { accessToken: await getAppLevelDataverseToken() }, user: { email } };
     const personalInfoRes = await dataverseRequest(minReq, 'get', 'ecom_personalinformations', {
+      headers: DATAVERSE_FORMATTED_VALUE_HEADERS,
       params: {
         $filter: `ecom_workemail eq '${email}'`,
         $select: [
@@ -1477,6 +1513,7 @@ async function handleAdminQuery(userMapping, params) {
       if (!employeeId) return { adminText: '❌ Karyawan tidak ditemukan.' };
 
       const profileRes = await dataverseRequest(minReq, 'get', 'ecom_personalinformations', {
+        headers: DATAVERSE_FORMATTED_VALUE_HEADERS,
         params: {
           $filter: `ecom_personalinformationid eq ${employeeId}`,
           $select: [
@@ -1515,11 +1552,11 @@ async function handleAdminQuery(userMapping, params) {
         ['Email Personal', p.ecom_personalemail],
         ['NIK', p.ecom_nik],
         ['No HP', p.ecom_phonenumber],
-        ['Gender', p.ecom_gender],
+        ['Gender', toProfileDisplayValue(p, 'ecom_gender')],
         ['Tanggal Lahir', p.ecom_dateofbirth],
         ['Tempat Lahir', p.ecom_placeofbirth],
-        ['Agama', p.ecom_religion],
-        ['Status Menikah', p.ecom_maritalstatus],
+        ['Agama', toProfileDisplayValue(p, 'ecom_religion')],
+        ['Status Menikah', toProfileDisplayValue(p, 'ecom_maritalstatus')],
         ['Jumlah Tanggungan', p.ecom_numberofdependent],
         ['Alamat', p.ecom_address],
         ['Jabatan', p.ecom_jobtitle],
@@ -1663,12 +1700,15 @@ async function handleAdminQuery(userMapping, params) {
       };
       if (filters.length) query.$filter = filters.join(' and ');
 
-      const list = await dataverseRequest(minReq, 'get', 'ecom_employeeleaves', { params: query });
+      const list = await dataverseRequest(minReq, 'get', 'ecom_employeeleaves', {
+        headers: DATAVERSE_FORMATTED_VALUE_HEADERS,
+        params: query
+      });
       const rows = list.value || [];
       if (!rows.length) return { adminText: '✅ Tidak ada data cuti.' };
       const titleFilter = descriptor.length ? ` (${descriptor.join(', ')})` : ' (terbaru)';
       return {
-        adminText: `📋 Leave Requests${titleFilter}\n${rows.map((r) => `- ${r.ecom_Employee?.ecom_employeename || '-'} | ${r.ecom_LeaveType?.ecom_name || r.ecom_name || '-'} | ${r.ecom_startdate || '-'} s/d ${r.ecom_enddate || '-'} | status ${r.ecom_leavestatus ?? '-'}`).join('\n')}`
+        adminText: `📋 Leave Requests${titleFilter}\n${rows.map((r) => `- ${r.ecom_Employee?.ecom_employeename || '-'} | ${r.ecom_LeaveType?.ecom_name || r.ecom_name || '-'} | ${r.ecom_startdate || '-'} s/d ${r.ecom_enddate || '-'} | status ${toLeaveStatusLabel(r)}`).join('\n')}`
       };
     }
 
@@ -1685,8 +1725,22 @@ async function getLeaveRequests(email) {
     const personal = await dataverseRequest(minReq, 'get', 'ecom_personalinformations', { params: { $filter: `ecom_workemail eq '${email}'`, $select: 'ecom_personalinformationid' } });
     if (!personal.value?.length) return { error: 'Personal info not found' };
     const employeeId = personal.value[0].ecom_personalinformationid;
-    const requestsRes = await dataverseRequest(minReq, 'get', 'ecom_employeeleaves', { params: { $filter: `_ecom_employee_value eq ${employeeId}`, $select: 'ecom_name,ecom_startdate,ecom_enddate,ecom_leavestatus', $orderby: 'createdon desc', $top: 10 } });
-    const requests = (requestsRes.value || []).map(r => ({ leave_type: r.ecom_name, start_date: r.ecom_startdate, end_date: r.ecom_enddate, status: r.ecom_leavestatus }));
+    const requestsRes = await dataverseRequest(minReq, 'get', 'ecom_employeeleaves', {
+      headers: DATAVERSE_FORMATTED_VALUE_HEADERS,
+      params: {
+        $filter: `_ecom_employee_value eq ${employeeId}`,
+        $select: 'ecom_name,ecom_startdate,ecom_enddate,ecom_leavestatus',
+        $orderby: 'createdon desc',
+        $top: 10
+      }
+    });
+    const requests = (requestsRes.value || []).map(r => ({
+      leave_type: r.ecom_name,
+      start_date: r.ecom_startdate,
+      end_date: r.ecom_enddate,
+      status: r.ecom_leavestatus,
+      status_label: toLeaveStatusLabel(r)
+    }));
     return { requests };
   } catch (e) {
     fastify.log.error({ msg: 'getLeaveRequests failed', e: e.message });
