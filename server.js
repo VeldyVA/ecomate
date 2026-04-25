@@ -49,6 +49,8 @@ fastify.register(fastifyCors, {
 const rawBodyStore = new Map();
 const pendingPusakaBySender = new Map();
 const PUSAKA_PENDING_TTL_MS = 2 * 60 * 1000;
+const recentVerifiedWebhookHashes = new Map();
+const VERIFIED_WEBHOOK_HASH_TTL_MS = 5 * 60 * 1000;
 
 function markPusakaPending(senderId, messageId) {
   pendingPusakaBySender.set(String(senderId), { messageId, ts: Date.now() });
@@ -67,6 +69,27 @@ function getPusakaPending(senderId) {
 
 function clearPusakaPending(senderId) {
   pendingPusakaBySender.delete(String(senderId));
+}
+
+function hashWebhookBody(rawBody) {
+  const bodyBuf = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(rawBody || '', 'utf8');
+  return crypto.createHash('sha256').update(bodyBuf).digest('hex');
+}
+
+function rememberVerifiedWebhook(rawBody) {
+  const hash = hashWebhookBody(rawBody);
+  recentVerifiedWebhookHashes.set(hash, Date.now());
+}
+
+function isRecentlyVerifiedWebhook(rawBody) {
+  const hash = hashWebhookBody(rawBody);
+  const ts = recentVerifiedWebhookHashes.get(hash);
+  if (!ts) return false;
+  if (Date.now() - ts > VERIFIED_WEBHOOK_HASH_TTL_MS) {
+    recentVerifiedWebhookHashes.delete(hash);
+    return false;
+  }
+  return true;
 }
 
 // Custom JSON parser to allow empty body for PATCH requests
@@ -95,6 +118,15 @@ fastify.addContentTypeParser('application/json', { parseAs: 'buffer' }, function
 // Clean up rawBodyStore after each request
 fastify.addHook('onSend', (req, reply, payload, done) => {
   rawBodyStore.delete(req.id);
+
+  // Best-effort cleanup for dedup cache
+  const now = Date.now();
+  for (const [hash, ts] of recentVerifiedWebhookHashes.entries()) {
+    if (now - ts > VERIFIED_WEBHOOK_HASH_TTL_MS) {
+      recentVerifiedWebhookHashes.delete(hash);
+    }
+  }
+
   done();
 });
 
@@ -1135,9 +1167,16 @@ fastify.post('/instagram/webhook', async (req, reply) => {
     fastify.log.info({ msg: 'ig webhook signature check', rawBodyLen: rawBody.length, hasSig1, hasSig256, secretsCount: appSecrets.length });
 
     if (!verifyInstagramSignature(rawBody, req.headers, appSecrets)) {
+      // If the exact same body was just accepted with a valid signature, this is likely
+      // a duplicate delivery from another app/subscription. Ack 200 to stop retry storms.
+      if (isRecentlyVerifiedWebhook(rawBody)) {
+        fastify.log.warn({ msg: 'Duplicate webhook with invalid signature ignored (already verified recently)' });
+        return reply.code(200).send({ status: 'ignored_duplicate_invalid_signature' });
+      }
       fastify.log.error({ msg: 'Instagram signature verification failed', sig1: req.headers['x-hub-signature'], sig256: req.headers['x-hub-signature-256'] });
       return reply.code(401).send({ error: 'Signature verification failed' });
     }
+    rememberVerifiedWebhook(rawBody);
     fastify.log.info({ msg: 'Instagram signature verified successfully' });
 
     const { entry } = req.body;
