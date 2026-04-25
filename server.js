@@ -71,6 +71,45 @@ function clearPusakaPending(senderId) {
   pendingPusakaBySender.delete(String(senderId));
 }
 
+function extractPusakaCallback(body, headers = {}) {
+  const b = body || {};
+
+  const senderId =
+    b.psid ||
+    b.instagram_psid ||
+    b.senderId ||
+    b.sender_id ||
+    b.from ||
+    b.userId ||
+    b.user_id ||
+    b?.data?.psid ||
+    b?.data?.senderId ||
+    b?.result?.psid ||
+    b?.meta?.psid ||
+    headers['x-instagram-psid'];
+
+  const messageTextRaw =
+    b.text ||
+    b.message ||
+    b.reply ||
+    b.response ||
+    b.answer ||
+    b.output ||
+    b?.data?.text ||
+    b?.data?.message ||
+    b?.data?.reply ||
+    b?.result?.text ||
+    b?.result?.message ||
+    b?.result?.reply ||
+    (Array.isArray(b.messages) ? (b.messages[0]?.text || b.messages[0]?.message || b.messages[0]?.body) : null);
+
+  const messageText = typeof messageTextRaw === 'string' ? messageTextRaw.trim() : '';
+  return {
+    senderId: senderId ? String(senderId) : '',
+    messageText
+  };
+}
+
 function hashWebhookBody(rawBody) {
   const bodyBuf = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(rawBody || '', 'utf8');
   return crypto.createHash('sha256').update(bodyBuf).digest('hex');
@@ -1024,7 +1063,14 @@ async function forwardToPusaka(senderId, messageText) {
   // Transform Instagram DM to WhatsApp Cloud API (Meta) format expected by Pusaka/QLAR
   const payload = {
     callback_url: callbackUrl,
+    reply_url: callbackUrl,
+    webhook_url: callbackUrl,
     channel: 'instagram',
+    source: 'instagram',
+    sender_id: String(senderId),
+    psid: String(senderId),
+    text: String(messageText || ''),
+    message: String(messageText || ''),
     object: 'whatsapp_business_account',
     entry: [{
       id: process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID || '0',
@@ -1079,7 +1125,9 @@ async function forwardToPusaka(senderId, messageText) {
         'Content-Length': bodyBuffer.length,
         ...extraHeaders,
         'X-Instagram-PSID': String(senderId),
-        'X-Reply-Url': callbackUrl
+        'X-Reply-Url': callbackUrl,
+        'X-Callback-Url': callbackUrl,
+        'X-Webhook-Url': callbackUrl
       },
       timeout: 20000
     });
@@ -1131,9 +1179,7 @@ fastify.post('/instagram/webhook', async (req, reply) => {
     // If it looks like a reply payload (psid + text), relay it and return 200.
     if (!hasSig1 && !hasSig256) {
       const body = req.body || {};
-      const senderId = body.psid || body.instagram_psid || body.senderId || body.sender_id;
-      const messageTextRaw = body.text || body.message || body.reply || body.response;
-      const messageText = typeof messageTextRaw === 'string' ? messageTextRaw.trim() : '';
+      const { senderId, messageText } = extractPusakaCallback(body, req.headers);
 
       if (senderId && !messageText) {
         const pending = getPusakaPending(senderId);
@@ -1290,9 +1336,7 @@ return reply.code(200).send({ status: 'received' });
 // ==============================
 fastify.post('/pusaka/reply', async (req, reply) => {
   const body = req.body || {};
-  const senderId = body.psid || body.instagram_psid || req.headers['x-instagram-psid'];
-  const messageTextRaw = body.text || body.message || body.reply || body.response;
-  const messageText = typeof messageTextRaw === 'string' ? messageTextRaw.trim() : '';
+  const { senderId, messageText } = extractPusakaCallback(body, req.headers);
 
   if (!senderId && !messageText) {
     fastify.log.warn({ msg: 'pusaka/reply: empty payload acknowledged', keys: Object.keys(body || {}) });
