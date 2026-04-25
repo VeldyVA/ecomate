@@ -1054,9 +1054,9 @@ function formatInstagramResponse(data, intent) {
         '- admin position <nama>',
         '- admin development <nama>',
         '- admin review <nama>',
-        '- admin cuti april 2026',
-        '- admin cuti veldy april 2026',
-        '- admin cuti veldy 2026'
+        '- admin cuti <bulan> <tahun>',
+        '- admin cuti <nama> <bulan> <tahun>',
+        '- admin cuti <nama> <tahun>'
       ].join('\n');
       break;
     case 'login':
