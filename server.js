@@ -1795,9 +1795,56 @@ async function submitLeaveRequestViaDm(email, rawMessage, senderId = null) {
 
   if (parsed.mode === 'need_type') {
     const leaveTypeData = await getLeaveTypes();
-    const leaveTypes = leaveTypeData.leaveTypes || [];
+    let leaveTypes = leaveTypeData.leaveTypes || [];
     if (!leaveTypes.length) {
       return { ok: false, message: 'Jenis cuti tidak ditemukan saat ini.' };
+    }
+
+    if (submissionKind === 'special') {
+      try {
+        const minReq = {
+          headers: {},
+          session: { accessToken: await getAppLevelDataverseToken() },
+          user: { email, permission: getPermissionByEmail(email) }
+        };
+
+        const leaveYear = new Date(parsed.startDate).getUTCFullYear().toString();
+        const personalInfoRes = await dataverseRequest(minReq, 'get', 'ecom_personalinformations', {
+          params: {
+            $filter: `ecom_workemail eq '${email}'`,
+            $select: 'ecom_personalinformationid'
+          }
+        });
+
+        const employeeGuid = personalInfoRes.value?.[0]?.ecom_personalinformationid;
+        if (employeeGuid) {
+          const usageRes = await dataverseRequest(minReq, 'get', 'ecom_leaveusages', {
+            params: {
+              $filter: `_ecom_employee_value eq ${employeeGuid} and ecom_period eq '${leaveYear}'`,
+              $select: '_ecom_leavetype_value'
+            }
+          });
+
+          const regularLeaveTypeIds = new Set((usageRes.value || [])
+            .map((u) => u._ecom_leavetype_value)
+            .filter(Boolean));
+
+          // Special leave candidates are types not tied to yearly regular balance records.
+          leaveTypes = leaveTypes.filter((t) => !regularLeaveTypeIds.has(t.ecom_leavetypeid));
+        }
+      } catch (e) {
+        fastify.log.error({ msg: 'special leave type filtering failed', e: e.message });
+      }
+
+      // Fallback heuristic if filtering still returns empty.
+      if (!leaveTypes.length) {
+        const specialNameRegex = /(panjang|khusus|special|menikah|duka|melahirkan|haid|berkabung|ibadah)/i;
+        leaveTypes = (leaveTypeData.leaveTypes || []).filter((t) => specialNameRegex.test(String(t.ecom_name || '')));
+      }
+    }
+
+    if (!leaveTypes.length) {
+      return { ok: false, message: submissionKind === 'special' ? 'Jenis cuti khusus tidak ditemukan untuk dipilih.' : 'Jenis cuti tidak ditemukan saat ini.' };
     }
 
     if (senderId) {
