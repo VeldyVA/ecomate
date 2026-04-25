@@ -970,6 +970,8 @@ async function forwardToPusaka(senderId, messageText) {
 
   // Transform Instagram DM to WhatsApp Cloud API (Meta) format expected by Pusaka/QLAR
   const payload = {
+    callback_url: callbackUrl,
+    channel: 'instagram',
     object: 'whatsapp_business_account',
     entry: [{
       id: process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID || '0',
@@ -1069,10 +1071,28 @@ fastify.post('/instagram/webhook', async (req, reply) => {
   const hasSig256 = !!req.headers['x-hub-signature-256'];
   fastify.log.info({ msg: 'instagram webhook post', hasSig1, hasSig256 });
   try {
+    // Fallback: some providers may post agent callback to this endpoint without Meta signature.
+    // If it looks like a reply payload (psid + text), relay it and return 200.
+    if (!hasSig1 && !hasSig256) {
+      const body = req.body || {};
+      const senderId = body.psid || body.instagram_psid || body.senderId || body.sender_id;
+      const messageText = body.text || body.message || body.reply || body.response;
+
+      if (senderId && messageText) {
+        fastify.log.info({ msg: 'unsigned callback received on /instagram/webhook; relaying to Instagram', senderId });
+        await sendInstagramMessage(String(senderId), String(messageText), process.env.INSTAGRAM_ACCESS_TOKEN)
+          .catch(err => fastify.log.error({ msg: 'unsigned callback relay failed', error: err.message }));
+        return reply.code(200).send({ status: 'relayed_unsigned_callback' });
+      }
+
+      // Ignore unknown unsigned payloads to avoid provider retry storms.
+      fastify.log.warn({ msg: 'ignoring unsigned payload on /instagram/webhook', keys: Object.keys(body || {}) });
+      return reply.code(200).send({ status: 'ignored_unsigned_payload' });
+    }
+
     const appSecretsRaw = process.env.INSTAGRAM_APP_SECRETS || process.env.INSTAGRAM_APP_SECRET || '';
     const appSecrets = appSecretsRaw.split(',').map(s => s.trim()).filter(Boolean);
     if (!appSecrets.length) return reply.code(400).send({ error: 'Missing app secret config' });
-    if (!hasSig1 && !hasSig256) return reply.code(400).send({ error: 'Missing signature header' });
 
     // Use raw Buffer captured during content-type parsing for exact HMAC match
     const rawBody = rawBodyStore.get(req.id) || Buffer.from(JSON.stringify(req.body || {}));
