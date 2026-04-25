@@ -996,8 +996,17 @@ async function forwardToPusaka(senderId, messageText) {
     const payloadString = JSON.stringify(payload);
     const bodyBuffer = Buffer.from(payloadString, 'utf8');
 
-    // Temporarily send without signature to test if Pusaka accepts unsigned requests
+    // Pusaka requires X-Hub-Signature-256 signed with the Facebook App Secret
+    // of the Meta app registered with Pusaka (NOT the verify token / access token).
+    // Set PUSAKA_APP_SECRET in Vercel env vars to the Facebook App Secret.
+    const appSecret = process.env.PUSAKA_APP_SECRET;
     const extraHeaders = {};
+    if (appSecret) {
+      extraHeaders['X-Hub-Signature-256'] = `sha256=${crypto.createHmac('sha256', appSecret).update(bodyBuffer).digest('hex')}`;
+      extraHeaders['X-Hub-Signature'] = `sha1=${crypto.createHmac('sha1', appSecret).update(bodyBuffer).digest('hex')}`;
+    } else {
+      fastify.log.error({ msg: 'PUSAKA_APP_SECRET not set — Pusaka will reject with 400. Set it to the Facebook App Secret of Pusaka\'s Meta app.' });
+    }
 
     fastify.log.info({ msg: 'Forwarding Instagram DM to Pusaka', senderId, messagePreview: String(messageText || '').substring(0, 80) });
 
