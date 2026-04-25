@@ -1124,6 +1124,7 @@ fastify.get('/instagram/webhook', async (req, reply) => {
 fastify.post('/instagram/webhook', async (req, reply) => {
   const hasSig1 = !!req.headers['x-hub-signature'];
   const hasSig256 = !!req.headers['x-hub-signature-256'];
+  const strictSignature = String(process.env.INSTAGRAM_STRICT_SIGNATURE || 'false').toLowerCase() === 'true';
   fastify.log.info({ msg: 'instagram webhook post', hasSig1, hasSig256 });
   try {
     // Fallback: some providers may post agent callback to this endpoint without Meta signature.
@@ -1174,6 +1175,14 @@ fastify.post('/instagram/webhook', async (req, reply) => {
         return reply.code(200).send({ status: 'ignored_duplicate_invalid_signature' });
       }
       fastify.log.error({ msg: 'Instagram signature verification failed', sig1: req.headers['x-hub-signature'], sig256: req.headers['x-hub-signature-256'] });
+
+      // Default behavior: ACK invalid signatures to avoid endless retries from duplicate
+      // deliveries signed by a different app secret. Request is still ignored (not processed).
+      if (!strictSignature) {
+        return reply.code(200).send({ status: 'ignored_invalid_signature' });
+      }
+
+      // Strict mode can be enabled with INSTAGRAM_STRICT_SIGNATURE=true
       return reply.code(401).send({ error: 'Signature verification failed' });
     }
     rememberVerifiedWebhook(rawBody);
