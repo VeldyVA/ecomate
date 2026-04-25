@@ -1429,27 +1429,44 @@ fastify.get("/admin/leave-balance/search", { preValidation: [fastify.authenticat
   if (employeeId) {
     employeeFilter = `ecom_Employee/_ecom_fullname_value eq ${employeeId}`;
   } else {
+    const safeEmail = email ? String(email).trim().replace(/'/g, "''") : null;
+    const safeName = name ? String(name).trim().replace(/'/g, "''") : null;
     let personalInfoFilter;
     if (email) {
-      personalInfoFilter = `ecom_workemail eq '${email}'`;
+      personalInfoFilter = `ecom_workemail eq '${safeEmail}'`;
     } else { // name
-      personalInfoFilter = `contains(ecom_employeename, '${name}')`;
+      personalInfoFilter = `contains(ecom_employeename, '${safeName}')`;
     }
 
     try {
       fastify.log.info(`Searching for employee with filter: ${personalInfoFilter}`);
-      const userData = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
+      let userData = await dataverseRequest(req, "get", "ecom_employeepersonalinformations", {
         params: {
           $filter: personalInfoFilter,
           $select: "_ecom_fullname_value"
         }
       });
 
-      if (!userData.value || userData.value.length === 0 || !userData.value[0]._ecom_fullname_value) {
-        fastify.log.warn({ msg: "Employee lookup failed", filter: personalInfoFilter, result: userData.value });
-        return reply.code(404).send({ message: `Employee not found for the provided criteria.` });
+      let foundEmployeeId = userData?.value?.[0]?._ecom_fullname_value || null;
+
+      // Fallback: some environments may not have rows in ecom_employeepersonalinformations.
+      // Try direct lookup from ecom_personalinformations.
+      if (!foundEmployeeId) {
+        const fallbackData = await dataverseRequest(req, "get", "ecom_personalinformations", {
+          params: {
+            $filter: personalInfoFilter,
+            $select: "ecom_personalinformationid",
+            $top: 1
+          }
+        });
+        foundEmployeeId = fallbackData?.value?.[0]?.ecom_personalinformationid || null;
       }
-      const foundEmployeeId = userData.value[0]._ecom_fullname_value;
+
+      if (!foundEmployeeId) {
+        fastify.log.warn({ msg: "Employee lookup failed", filter: personalInfoFilter, result: userData?.value });
+        return reply.code(404).send({ message: "Employee not found for the provided criteria." });
+      }
+
       employeeFilter = `ecom_Employee/_ecom_fullname_value eq ${foundEmployeeId}`;
     } catch (err) {
       console.error("❌ Error fetching employee by email/name:", err.response?.data || err.message);
