@@ -964,16 +964,28 @@ async function forwardToPusaka(senderId, messageText) {
 
   try {
     const payloadString = JSON.stringify(payload);
+
+    // Build auth headers — try all common patterns since Pusaka docs are not public
     const extraHeaders = {};
+    const queryParams = {};
     if (pusakaSecret) {
-      // Send both SHA1 and SHA256 — Pusaka may expect either format
-      extraHeaders['X-Hub-Signature'] = `sha1=${crypto.createHmac('sha1', pusakaSecret).update(payloadString).digest('hex')}`;
+      // Pattern 1: Bearer token (most common for REST webhooks)
+      extraHeaders['Authorization'] = `Bearer ${pusakaSecret}`;
+      // Pattern 2: HMAC SHA256 (Meta/WhatsApp Cloud format)
       extraHeaders['X-Hub-Signature-256'] = `sha256=${crypto.createHmac('sha256', pusakaSecret).update(payloadString).digest('hex')}`;
+      // Pattern 3: HMAC SHA1 (older Meta format)
+      extraHeaders['X-Hub-Signature'] = `sha1=${crypto.createHmac('sha1', pusakaSecret).update(payloadString).digest('hex')}`;
+      // Pattern 4: token in query string
+      queryParams.token = pusakaSecret;
     }
+
+    const urlWithParams = Object.keys(queryParams).length
+      ? `${pusakaWebhookUrl}?${new URLSearchParams(queryParams).toString()}`
+      : pusakaWebhookUrl;
 
     fastify.log.info({ msg: 'Forwarding Instagram DM to Pusaka', senderId, messagePreview: String(messageText || '').substring(0, 80) });
 
-    const res = await axios.post(pusakaWebhookUrl, payload, {
+    const res = await axios.post(urlWithParams, payload, {
       headers: {
         'Content-Type': 'application/json',
         ...extraHeaders,
