@@ -2599,7 +2599,7 @@ async function handleInstagramMessage(senderId, messageText) {
           };
           await setPSIDUserMapping(senderId, mappedUser);
           const email = mappedUser.email;
-          responseText = `✅ Login berhasil! Email: ${email}\n\nSekarang coba: ajukan cuti, cek cuti, riwayat cuti, profil, development (riwayat project), peer review`;
+          responseText = `✅ Login berhasil! Email: ${email}\n\nSekarang coba: ajukan cuti, cek cuti, riwayat cuti, profil, development (riwayat project), peer review, atau ketik bantuan.`;
         } else {
           responseText = '❌ OTP tidak valid atau sudah expired. Coba login lagi.';
         }
@@ -2620,7 +2620,7 @@ async function handleInstagramMessage(senderId, messageText) {
             permission: getPermissionByEmail(potentialEmail),
             employeeId: res.value[0].ecom_personalinformationid || null
           });
-          responseText = `✅ Email terverifikasi: ${potentialEmail}\n\nSekarang coba: ajukan cuti, cek cuti, riwayat cuti, profil, development (riwayat project), peer review`;
+          responseText = `✅ Email terverifikasi: ${potentialEmail}\n\nSekarang coba: ajukan cuti, cek cuti, riwayat cuti, profil, development (riwayat project), peer review, atau ketik bantuan.`;
         } else {
           responseText = '❌ Email tidak ditemukan di sistem. Pastikan email kerja Anda.';
         }
