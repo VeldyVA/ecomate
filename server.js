@@ -1097,6 +1097,55 @@ async function sendInstagramMessage(recipientId, messageText, accessToken) {
   return responses[responses.length - 1] || null;
 }
 
+async function sendInstagramServiceButtons(recipientId, accessToken) {
+  const token = (accessToken || process.env.INSTAGRAM_ACCESS_TOKEN || '').trim();
+  if (!token) return null;
+
+  const endpoint = 'https://graph.instagram.com/v25.0/me/messages';
+  const payload = {
+    recipient: { id: String(recipientId) },
+    message: {
+      attachment: {
+        type: 'template',
+        payload: {
+          template_type: 'button',
+          text: 'Layanan HR lebih lengkap:',
+          buttons: [
+            {
+              type: 'web_url',
+              title: 'Whatsapp Agent ecomate (AI)',
+              url: 'https://wa.me/6281280393537'
+            },
+            {
+              type: 'web_url',
+              title: 'Web Agent ecomate (AI)',
+              url: 'https://app.qlar.ai/ecomate'
+            },
+            {
+              type: 'web_url',
+              title: 'ecomate Dashboard',
+              url: 'https://ecomate-dashboard.lovable.app'
+            }
+          ]
+        }
+      }
+    }
+  };
+
+  try {
+    return await axios.post(endpoint, payload, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 10000
+    });
+  } catch (err) {
+    fastify.log.warn({ msg: 'sendInstagramServiceButtons failed', error: err.message, status: err.response?.status, responseData: err.response?.data });
+    return null;
+  }
+}
+
 function getDataverseFormattedValue(record, fieldName) {
   if (!record || !fieldName) return null;
   const key = `${fieldName}@OData.Community.Display.V1.FormattedValue`;
@@ -1162,9 +1211,9 @@ function formatInstagramResponse(data, intent) {
         '- admin cuti <nama> <tahun>',
         '',
         'Layanan HR lebih lengkap:',
-        '1. Whatsapp Agent ecomate (AI): https://wa.me/6281280393537',
-        '2. ecomate Dashboard: https://ecomate-dashboard.lovable.app',
-        '3. Web Agent ecomate (AI): https://app.qlar.ai/ecomate'
+        '1. Whatsapp Agent ecomate (AI)',
+        '2. Web Agent ecomate (AI)',
+        '3. ecomate Dashboard'
       ].join('\n');
       break;
     case 'login':
@@ -2624,6 +2673,10 @@ async function handleInstagramMessage(senderId, messageText) {
   fastify.log.info({ msg: 'Final Instagram message prepared', senderId, responseText: responseText.substring(0, 50) + '...' });
   // Send the final responseText
   await sendInstagramMessage(senderId, responseText, process.env.INSTAGRAM_ACCESS_TOKEN);
+
+  if (parseIntent(messageText).intent === 'help') {
+    await sendInstagramServiceButtons(senderId, process.env.INSTAGRAM_ACCESS_TOKEN);
+  }
 }
 
 const EmojiMap = {
