@@ -1208,12 +1208,7 @@ function formatInstagramResponse(data, intent) {
         '- admin review <nama>',
         '- admin cuti <bulan> <tahun>',
         '- admin cuti <nama> <bulan> <tahun>',
-        '- admin cuti <nama> <tahun>',
-        '',
-        'Layanan HR lebih lengkap:',
-        '1. Whatsapp Agent ecomate (AI)',
-        '2. Web Agent ecomate (AI)',
-        '3. ecomate Dashboard'
+        '- admin cuti <nama> <tahun>'
       ].join('\n');
       break;
     case 'login':
