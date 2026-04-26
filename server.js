@@ -1161,7 +1161,12 @@ function formatInstagramResponse(data, intent) {
         '- admin review <nama>',
         '- admin cuti <bulan> <tahun>',
         '- admin cuti <nama> <bulan> <tahun>',
-        '- admin cuti <nama> <tahun>'
+        '- admin cuti <nama> <tahun>',
+        '',
+        'Layanan lebih lengkap terkait HR dapat menghubungi:',
+        '1. Whatsapp Agent ecomate (AI): https://wa.me/6281280393537',
+        '2. ecomate Dashboard: https://ecomate-dashboard.lovable.app',
+        '3. Web Agent ecomate (AI): https://app.qlar.ai/ecomate'
       ].join('\n');
       break;
     case 'login':
