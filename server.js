@@ -1097,9 +1097,12 @@ async function sendInstagramMessage(recipientId, messageText, accessToken) {
   return responses[responses.length - 1] || null;
 }
 
-async function sendInstagramServiceButtons(recipientId, accessToken) {
+const LOGIN_URL = 'https://ecomate-phi.vercel.app/login';
+
+async function sendInstagramButtonTemplate(recipientId, accessToken, text, buttons) {
   const token = (accessToken || process.env.INSTAGRAM_ACCESS_TOKEN || '').trim();
   if (!token) return null;
+  if (!Array.isArray(buttons) || !buttons.length) return null;
 
   const endpoint = 'https://graph.instagram.com/v25.0/me/messages';
   const payload = {
@@ -1109,24 +1112,8 @@ async function sendInstagramServiceButtons(recipientId, accessToken) {
         type: 'template',
         payload: {
           template_type: 'button',
-          text: 'Layanan HR lebih lengkap:',
-          buttons: [
-            {
-              type: 'web_url',
-              title: 'Whatsapp Agent ecomate (AI)',
-              url: 'https://wa.me/6281280393537'
-            },
-            {
-              type: 'web_url',
-              title: 'Web Agent ecomate (AI)',
-              url: 'https://app.qlar.ai/ecomate'
-            },
-            {
-              type: 'web_url',
-              title: 'ecomate Dashboard',
-              url: 'https://ecomate-dashboard.lovable.app'
-            }
-          ]
+          text,
+          buttons
         }
       }
     }
@@ -1141,9 +1128,39 @@ async function sendInstagramServiceButtons(recipientId, accessToken) {
       timeout: 10000
     });
   } catch (err) {
-    fastify.log.warn({ msg: 'sendInstagramServiceButtons failed', error: err.message, status: err.response?.status, responseData: err.response?.data });
+    fastify.log.warn({ msg: 'sendInstagramButtonTemplate failed', error: err.message, status: err.response?.status, responseData: err.response?.data });
     return null;
   }
+}
+
+async function sendInstagramLoginButton(recipientId, accessToken) {
+  return sendInstagramButtonTemplate(recipientId, accessToken, 'Klik tombol di bawah untuk login:', [
+    {
+      type: 'web_url',
+      title: 'Login ecomate',
+      url: LOGIN_URL
+    }
+  ]);
+}
+
+async function sendInstagramServiceButtons(recipientId, accessToken) {
+  return sendInstagramButtonTemplate(recipientId, accessToken, 'Layanan HR lebih lengkap:', [
+    {
+      type: 'web_url',
+      title: 'Whatsapp Agent ecomate (AI)',
+      url: 'https://wa.me/6281280393537'
+    },
+    {
+      type: 'web_url',
+      title: 'Web Agent ecomate (AI)',
+      url: 'https://app.qlar.ai/ecomate'
+    },
+    {
+      type: 'web_url',
+      title: 'ecomate Dashboard',
+      url: 'https://ecomate-dashboard.lovable.app'
+    }
+  ]);
 }
 
 function getDataverseFormattedValue(record, fieldName) {
@@ -1212,7 +1229,7 @@ function formatInstagramResponse(data, intent) {
       ].join('\n');
       break;
     case 'login':
-      response = '🔐 Login diminta\n\nUntuk akses data, klik link ini untuk login: https://ecomate-phi.vercel.app/login\n\nSetelah login, salin OTP dari browser dan kirim ke sini.';
+      response = '🔐 Login diminta\n\nKlik tombol Login di bawah, lalu salin OTP dari browser dan kirim ke sini.';
       break;
     case 'get_leave_types':
       if (data.leaveTypes && data.leaveTypes.length) {
@@ -2530,6 +2547,8 @@ return reply.code(200).send({ status: 'received' });
 
 async function handleInstagramMessage(senderId, messageText) {
   let responseText = '⏳ Sedang memproses permintaan Anda...'; // Initial response
+  let shouldSendLoginButton = false;
+  let shouldSendServiceButtons = false;
 
   try {
     fastify.log.info({ msg: 'handleInstagramMessage started', senderId, messageText });
@@ -2561,7 +2580,9 @@ async function handleInstagramMessage(senderId, messageText) {
       intent === 'get_peer_review_summary' ||
       intent === 'admin_query'
     ) && !userEmail) {
-      responseText = 'ℹ️ Untuk akses data, klik link ini untuk login: https://ecomate-phi.vercel.app/login\n\nSetelah login, salin OTP dari browser dan kirim ke sini.';
+      responseText = 'ℹ️ Untuk akses data, silakan login dulu. Klik tombol Login di bawah, lalu salin OTP dari browser dan kirim ke sini.';
+      shouldSendLoginButton = true;
+      shouldSendServiceButtons = true;
       // No return here, will send at the end
     }
     // If user sends OTP (6 digits)
@@ -2614,9 +2635,12 @@ async function handleInstagramMessage(senderId, messageText) {
       switch (intent) {
         case 'help':
           responseData = { action: 'help' };
+          shouldSendServiceButtons = true;
           break;
         case 'login':
           responseData = { action: 'login' };
+          shouldSendLoginButton = true;
+          shouldSendServiceButtons = true;
           break;
         case 'submit_leave':
           if (userEmail) {
@@ -2669,7 +2693,11 @@ async function handleInstagramMessage(senderId, messageText) {
   // Send the final responseText
   await sendInstagramMessage(senderId, responseText, process.env.INSTAGRAM_ACCESS_TOKEN);
 
-  if (parseIntent(messageText).intent === 'help') {
+  if (shouldSendLoginButton) {
+    await sendInstagramLoginButton(senderId, process.env.INSTAGRAM_ACCESS_TOKEN);
+  }
+
+  if (shouldSendServiceButtons) {
     await sendInstagramServiceButtons(senderId, process.env.INSTAGRAM_ACCESS_TOKEN);
   }
 }
