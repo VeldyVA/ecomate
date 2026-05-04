@@ -871,6 +871,369 @@ function extractPeriodFromText(text) {
   return m ? m[1] : null;
 }
 
+const GROQ_BASE_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const GROQ_ROUTER_MODEL = process.env.GROQ_ROUTER_MODEL || 'mistral-7b-instruct';
+const GROQ_FORMATTER_MODEL = process.env.GROQ_FORMATTER_MODEL || 'llama3-8b-8192';
+const INSTAGRAM_AI_INTERNAL_BASE_URL = (process.env.INSTAGRAM_AI_INTERNAL_BASE_URL || process.env.PUBLIC_BASE_URL || 'https://ecomate-phi.vercel.app').replace(/\/$/, '');
+
+function escapeODataString(value) {
+  return String(value || '').replace(/'/g, "''");
+}
+
+function buildInstagramAiEndpointCatalog(permission) {
+  const isAdminUser = ['admin', 'co_admin'].includes(permission);
+  const catalog = [
+    {
+      endpoint: '/profile/personal-info',
+      method: 'GET',
+      description: 'Profil lengkap user login.'
+    },
+    {
+      endpoint: '/profile/position',
+      method: 'GET',
+      description: 'Posisi/jabatan aktif user login.'
+    },
+    {
+      endpoint: '/leave/types',
+      method: 'GET',
+      description: 'Daftar jenis cuti aktif.'
+    },
+    {
+      endpoint: '/leave/requests',
+      method: 'GET',
+      description: 'Riwayat pengajuan cuti user login.'
+    },
+    {
+      endpoint: '/developments',
+      method: 'GET',
+      description: 'Riwayat development/project/training user login.'
+    },
+    {
+      endpoint: '/summary-peer-review',
+      method: 'GET',
+      description: 'Summary peer review user login.'
+    },
+    {
+      endpoint: '/leave/balance',
+      method: 'GET',
+      description: 'Saldo cuti user login, wajib query period (format YYYY).',
+      requiredQuery: ['period']
+    }
+  ];
+
+  if (isAdminUser) {
+    catalog.push(
+      {
+        endpoint: '/admin/profile/search',
+        method: 'GET',
+        description: 'Cari profil karyawan by name/email/id/code.',
+        optionalQuery: ['name', 'email', 'id', 'code']
+      },
+      {
+        endpoint: '/admin/leave-requests',
+        method: 'GET',
+        description: 'Daftar leave request admin.',
+        optionalQuery: ['month', 'year', 'name']
+      },
+      {
+        endpoint: '/admin/position/search',
+        method: 'GET',
+        description: 'Cari riwayat posisi by name/email/employeeId.',
+        optionalQuery: ['name', 'email', 'employeeId']
+      },
+      {
+        endpoint: '/admin/developments/search',
+        method: 'GET',
+        description: 'Cari development by name/email.',
+        optionalQuery: ['name', 'email']
+      },
+      {
+        endpoint: '/admin/summary-peer-review/search',
+        method: 'GET',
+        description: 'Cari summary peer review by name/email/employeeId.',
+        optionalQuery: ['name', 'email', 'employeeId']
+      },
+      {
+        endpoint: '/admin/leave-balance/search',
+        method: 'GET',
+        description: 'Cari saldo cuti karyawan admin, wajib period + salah satu employeeId/email/name.',
+        requiredQuery: ['period'],
+        optionalQuery: ['employeeId', 'email', 'name']
+      }
+    );
+  }
+
+  return catalog;
+}
+
+function parseGroqJson(rawContent) {
+  if (!rawContent) return null;
+  const text = String(rawContent).trim();
+
+  try {
+    return JSON.parse(text);
+  } catch (_) {
+    // continue
+  }
+
+  const codeBlock = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (codeBlock?.[1]) {
+    try {
+      return JSON.parse(codeBlock[1].trim());
+    } catch (_) {
+      // continue
+    }
+  }
+
+  const firstBrace = text.indexOf('{');
+  const lastBrace = text.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    const candidate = text.slice(firstBrace, lastBrace + 1);
+    try {
+      return JSON.parse(candidate);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  return null;
+}
+
+async function callGroq(messages, options = {}) {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) {
+    throw new Error('GROQ_API_KEY is not configured');
+  }
+
+  const timeout = Number(options.timeoutMs || 8000);
+  const model = options.model || GROQ_FORMATTER_MODEL;
+
+  const res = await axios.post(
+    GROQ_BASE_URL,
+    {
+      model,
+      messages,
+      temperature: options.temperature ?? 0.1,
+      max_tokens: options.maxTokens ?? 800,
+      response_format: options.responseFormat,
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      timeout
+    }
+  );
+
+  return res.data?.choices?.[0]?.message?.content || '';
+}
+
+async function getInstagramAiJwtPayloadByEmail(email) {
+  const cleanEmail = String(email || '').trim().toLowerCase();
+  if (!cleanEmail) return null;
+
+  const escapedEmail = escapeODataString(cleanEmail);
+  const minReq = {
+    headers: {},
+    session: { accessToken: await getAppLevelDataverseToken() }
+  };
+
+  let employeeId = null;
+  try {
+    const res = await dataverseRequest(minReq, 'get', 'ecom_employeepersonalinformations', {
+      params: {
+        $filter: `ecom_workemail eq '${escapedEmail}'`,
+        $select: '_ecom_fullname_value'
+      }
+    });
+    employeeId = res.value?.[0]?._ecom_fullname_value || null;
+  } catch (e) {
+    fastify.log.warn({ msg: 'AI JWT payload lookup from ecom_employeepersonalinformations failed', email: cleanEmail, error: e.message });
+  }
+
+  if (!employeeId) {
+    try {
+      const fallback = await dataverseRequest(minReq, 'get', 'ecom_personalinformations', {
+        params: {
+          $filter: `ecom_workemail eq '${escapedEmail}'`,
+          $select: 'ecom_personalinformationid'
+        }
+      });
+      employeeId = fallback.value?.[0]?.ecom_personalinformationid || null;
+    } catch (e) {
+      fastify.log.warn({ msg: 'AI JWT payload fallback lookup failed', email: cleanEmail, error: e.message });
+    }
+  }
+
+  if (!employeeId) return null;
+
+  return {
+    employeeId,
+    email: cleanEmail,
+    permission: getPermissionByEmail(cleanEmail)
+  };
+}
+
+async function callInternalApiWithJwt(endpoint, method, jwtToken, query = {}, body = undefined) {
+  const url = `${INSTAGRAM_AI_INTERNAL_BASE_URL}${endpoint}`;
+  const response = await axios({
+    method,
+    url,
+    headers: {
+      Authorization: `Bearer ${jwtToken}`,
+      'Content-Type': 'application/json'
+    },
+    params: query,
+    data: body,
+    timeout: 10000
+  });
+  return response.data;
+}
+
+async function tryAIResponse(senderId, messageText, userEmail) {
+  const text = String(messageText || '').trim();
+  if (!text) return { handled: false, reason: 'empty_message' };
+  if (!process.env.GROQ_API_KEY) return { handled: false, reason: 'missing_groq_key' };
+
+  // Keep OTP, email mapping, and login bootstrap on legacy flow to avoid auth regressions.
+  if (/^\d{6}$/.test(text)) return { handled: false, reason: 'otp_message' };
+  if (text.includes('@') && text.includes('.')) return { handled: false, reason: 'email_mapping_message' };
+  if (!userEmail) return { handled: false, reason: 'unmapped_user' };
+
+  const jwtPayload = await getInstagramAiJwtPayloadByEmail(userEmail);
+  if (!jwtPayload?.employeeId) {
+    return { handled: false, reason: 'missing_jwt_payload' };
+  }
+
+  const shortLivedJwt = await fastify.jwt.sign(jwtPayload, { expiresIn: '10m' });
+  const endpointCatalog = buildInstagramAiEndpointCatalog(jwtPayload.permission);
+
+  const plannerPrompt = [
+    'Anda adalah router intent untuk HR API.',
+    'Tentukan endpoint internal yang paling tepat berdasarkan pesan user.',
+    'Gunakan hanya endpoint pada katalog.',
+    'Output WAJIB JSON valid tanpa markdown dengan schema:',
+    '{"action":"api_call|direct_reply","method":"GET|POST|PATCH|NONE","endpoint":"/path|NONE","query":{},"body":{},"reply":"jawaban langsung jika direct_reply"}',
+    'Aturan:',
+    '- Jika user menanyakan data HR, pilih action=api_call.',
+    '- Jika user minta bantuan umum/menu/login, pilih action=direct_reply.',
+    '- Jangan isi query/body yang tidak relevan.',
+    '- period untuk saldo cuti harus YYYY.',
+    '- Hindari operasi destruktif; prioritaskan endpoint GET.'
+  ].join('\n');
+
+  let planned;
+  try {
+    const plannerRaw = await callGroq(
+      [
+        { role: 'system', content: plannerPrompt },
+        {
+          role: 'user',
+          content: JSON.stringify({
+            messageText: text,
+            userEmail,
+            permission: jwtPayload.permission,
+            endpointCatalog
+          })
+        }
+      ],
+      {
+        model: GROQ_ROUTER_MODEL,
+        timeoutMs: 7000,
+        temperature: 0,
+        maxTokens: 500,
+        responseFormat: { type: 'json_object' }
+      }
+    );
+    planned = parseGroqJson(plannerRaw);
+  } catch (e) {
+    fastify.log.warn({ msg: 'AI planner failed', senderId, error: e.message });
+    return { handled: false, reason: 'planner_failed' };
+  }
+
+  if (!planned || typeof planned !== 'object') {
+    return { handled: false, reason: 'invalid_planner_output' };
+  }
+
+  if (planned.action === 'direct_reply') {
+    const directReply = String(planned.reply || '').trim();
+    if (!directReply) return { handled: false, reason: 'empty_direct_reply' };
+    return { handled: true, responseText: directReply };
+  }
+
+  const method = String(planned.method || 'GET').toUpperCase();
+  const endpoint = String(planned.endpoint || '');
+  const allowedTarget = endpointCatalog.find((e) => e.endpoint === endpoint && e.method === method);
+  if (!allowedTarget) {
+    return { handled: false, reason: 'endpoint_not_allowed' };
+  }
+
+  let apiData;
+  try {
+    apiData = await callInternalApiWithJwt(
+      endpoint,
+      method,
+      shortLivedJwt,
+      (planned.query && typeof planned.query === 'object') ? planned.query : {},
+      (planned.body && typeof planned.body === 'object') ? planned.body : undefined
+    );
+  } catch (e) {
+    fastify.log.warn({
+      msg: 'AI internal API call failed',
+      senderId,
+      endpoint,
+      method,
+      status: e.response?.status,
+      error: e.message,
+      responseData: e.response?.data
+    });
+    return { handled: false, reason: 'internal_api_failed' };
+  }
+
+  const formatterPrompt = [
+    'Anda adalah asisten HR untuk balasan Instagram DM.',
+    'Tugas: ubah hasil API menjadi jawaban natural Bahasa Indonesia, ringkas tapi informatif.',
+    'Aturan output:',
+    '- Maksimum 900 karakter.',
+    '- Gunakan bullet jika data list.',
+    '- Jangan halusinasi data yang tidak ada.',
+    '- Jika data kosong, jelaskan dengan sopan.',
+    '- Jangan tampilkan JSON mentah.'
+  ].join('\n');
+
+  try {
+    const formatted = await callGroq(
+      [
+        { role: 'system', content: formatterPrompt },
+        {
+          role: 'user',
+          content: JSON.stringify({
+            originalMessage: text,
+            endpoint,
+            method,
+            query: planned.query || {},
+            apiData
+          })
+        }
+      ],
+      {
+        model: GROQ_FORMATTER_MODEL,
+        timeoutMs: 7000,
+        temperature: 0.2,
+        maxTokens: 700
+      }
+    );
+
+    const responseText = String(formatted || '').trim();
+    if (!responseText) return { handled: false, reason: 'empty_formatted_response' };
+    return { handled: true, responseText: responseText.slice(0, 900) };
+  } catch (e) {
+    fastify.log.warn({ msg: 'AI formatter failed', senderId, error: e.message });
+    return { handled: false, reason: 'formatter_failed' };
+  }
+}
+
 function parseIntent(messageText) {
   const text = (messageText || '').toLowerCase().trim();
   if (!text) return { intent: 'unknown', params: {} };
@@ -2549,6 +2912,7 @@ async function handleInstagramMessage(senderId, messageText) {
   let responseText = '⏳ Sedang memproses permintaan Anda...'; // Initial response
   let shouldSendLoginButton = false;
   let shouldSendServiceButtons = false;
+  let handledIntent = 'ai';
 
   try {
     fastify.log.info({ msg: 'handleInstagramMessage started', senderId, messageText });
@@ -2556,37 +2920,42 @@ async function handleInstagramMessage(senderId, messageText) {
     let userMapping = await getPSIDUserMapping(senderId);
     let userEmail = userMapping?.email || null;
     fastify.log.info({ msg: 'DEBUG: after getPSIDUserMapping', userMapping });
-    const { intent, params } = parseIntent(messageText);
-    fastify.log.info({ msg: 'DEBUG: after parseIntent', intent, params });
-    fastify.log.info({ msg: 'intent parsed', intent, senderId, mapped: !!userEmail });
-
-    // User's requested logic for initial responseText update
-    if (!userEmail) {
-      responseText = 'Silakan login dulu...';
+    const aiResult = await tryAIResponse(senderId, messageText, userEmail);
+    if (aiResult?.handled) {
+      responseText = aiResult.responseText;
+      fastify.log.info({ msg: 'AI response handled', senderId, mapped: !!userEmail });
     } else {
-      responseText = 'Data Anda sedang diproses...';
-    }
+      fastify.log.info({ msg: 'AI response fallback', senderId, reason: aiResult?.reason || 'unknown' });
 
-    // --- Start of original logic, now modifying responseText instead of sending directly ---
+      const { intent, params } = parseIntent(messageText);
+      handledIntent = intent;
+      fastify.log.info({ msg: 'DEBUG: after parseIntent', intent, params });
+      fastify.log.info({ msg: 'intent parsed', intent, senderId, mapped: !!userEmail });
 
-    // If sensitive actions require mapping/email, prompt user
-    if ((
-      intent === 'submit_leave' ||
-      intent === 'check_leave_balance' ||
-      intent === 'get_profile' ||
-      intent === 'get_leave_requests' ||
-      intent === 'get_position' ||
-      intent === 'get_developments' ||
-      intent === 'get_peer_review_summary' ||
-      intent === 'admin_query'
-    ) && !userEmail) {
-      responseText = 'ℹ️ Untuk akses data, silakan login dulu. Klik tombol Login di bawah, lalu salin OTP dari browser dan kirim ke sini.';
-      shouldSendLoginButton = true;
-      shouldSendServiceButtons = true;
-      // No return here, will send at the end
-    }
-    // If user sends OTP (6 digits)
-    else if (messageText.match(/^\d{6}$/)) { // Use else if to prevent multiple branches from executing
+      // User's requested logic for initial responseText update
+      if (!userEmail) {
+        responseText = 'Silakan login dulu...';
+      } else {
+        responseText = 'Data Anda sedang diproses...';
+      }
+
+      // If sensitive actions require mapping/email, prompt user
+      if ((
+        intent === 'submit_leave' ||
+        intent === 'check_leave_balance' ||
+        intent === 'get_profile' ||
+        intent === 'get_leave_requests' ||
+        intent === 'get_position' ||
+        intent === 'get_developments' ||
+        intent === 'get_peer_review_summary' ||
+        intent === 'admin_query'
+      ) && !userEmail) {
+        responseText = 'ℹ️ Untuk akses data, silakan login dulu. Klik tombol Login di bawah, lalu salin OTP dari browser dan kirim ke sini.';
+        shouldSendLoginButton = true;
+        shouldSendServiceButtons = true;
+      }
+      // If user sends OTP (6 digits)
+      else if (messageText.match(/^\d{6}$/)) {
       const otp = messageText;
       try {
         const jwt = await kv.get(otp);
@@ -2607,9 +2976,9 @@ async function handleInstagramMessage(senderId, messageText) {
         fastify.log.error({ msg: 'OTP validation failed', e: e.message });
         responseText = '❌ Terjadi kesalahan saat validasi OTP.';
       }
-    }
-    // If user sends an email to map (fallback, but now prefer OTP)
-    else if (intent === 'unknown' && messageText.includes('@') && messageText.includes('.')) { // Use else if
+      }
+      // If user sends an email to map (fallback, but now prefer OTP)
+      else if (intent === 'unknown' && messageText.includes('@') && messageText.includes('.')) {
       const potentialEmail = messageText.trim();
       try {
         const minReq = { headers: {}, session: { accessToken: await getAppLevelDataverseToken() } };
@@ -2628,61 +2997,62 @@ async function handleInstagramMessage(senderId, messageText) {
         fastify.log.error({ msg: 'validate email failed', e: e.message });
         responseText = '❌ Email tidak ditemukan di sistem. Pastikan email kerja Anda.'; // Fallback for error
       }
-    }
-    // Handle other intents
-    else {
-      let responseData = {};
-      switch (intent) {
-        case 'help':
-          responseData = { action: 'help' };
-          shouldSendServiceButtons = true;
-          break;
-        case 'login':
-          responseData = { action: 'login' };
-          shouldSendLoginButton = true;
-          shouldSendServiceButtons = true;
-          break;
-        case 'submit_leave':
-          if (userEmail) {
-            responseData = await submitLeaveRequestViaDm(userEmail, messageText, senderId);
-          } else {
-            responseData = {
-              ok: false,
-              message: 'Silakan login dulu sebelum mengajukan cuti.'
-            };
-          }
-          break;
-        case 'get_leave_types':
-          responseData = await getLeaveTypes();
-          break;
-        case 'check_leave_balance':
-          if (userEmail) responseData = await getLeaveBalance(userEmail, params.period || null);
-          break;
-        case 'get_profile':
-          if (userEmail) responseData = await getProfile(userEmail);
-          break;
-        case 'get_position':
-          if (userEmail) responseData = await getPosition(userEmail);
-          break;
-        case 'get_leave_requests':
-          if (userEmail) responseData = await getLeaveRequests(userEmail);
-          break;
-        case 'get_developments':
-          if (userEmail) responseData = await getDevelopments(userEmail);
-          break;
-        case 'get_peer_review_summary':
-          if (userEmail) responseData = await getPeerReviewSummary(userEmail);
-          break;
-        case 'admin_query':
-          responseData = await handleAdminQuery(userMapping, params);
-          break;
-        default:
-          responseData = { action: 'unknown' };
       }
-      responseText = formatInstagramResponse(responseData, intent);
+      // Handle other intents
+      else {
+        let responseData = {};
+        switch (intent) {
+          case 'help':
+            responseData = { action: 'help' };
+            shouldSendServiceButtons = true;
+            break;
+          case 'login':
+            responseData = { action: 'login' };
+            shouldSendLoginButton = true;
+            shouldSendServiceButtons = true;
+            break;
+          case 'submit_leave':
+            if (userEmail) {
+              responseData = await submitLeaveRequestViaDm(userEmail, messageText, senderId);
+            } else {
+              responseData = {
+                ok: false,
+                message: 'Silakan login dulu sebelum mengajukan cuti.'
+              };
+            }
+            break;
+          case 'get_leave_types':
+            responseData = await getLeaveTypes();
+            break;
+          case 'check_leave_balance':
+            if (userEmail) responseData = await getLeaveBalance(userEmail, params.period || null);
+            break;
+          case 'get_profile':
+            if (userEmail) responseData = await getProfile(userEmail);
+            break;
+          case 'get_position':
+            if (userEmail) responseData = await getPosition(userEmail);
+            break;
+          case 'get_leave_requests':
+            if (userEmail) responseData = await getLeaveRequests(userEmail);
+            break;
+          case 'get_developments':
+            if (userEmail) responseData = await getDevelopments(userEmail);
+            break;
+          case 'get_peer_review_summary':
+            if (userEmail) responseData = await getPeerReviewSummary(userEmail);
+            break;
+          case 'admin_query':
+            responseData = await handleAdminQuery(userMapping, params);
+            break;
+          default:
+            responseData = { action: 'unknown' };
+        }
+        responseText = formatInstagramResponse(responseData, intent);
+      }
     }
 
-    fastify.log.info({ msg: 'instagram reply prepared', senderId, intent });
+    fastify.log.info({ msg: 'instagram reply prepared', senderId, intent: handledIntent });
 
   } catch (e) {
     fastify.log.error({ msg: 'handleInstagramMessage unexpected', e: e.message });
