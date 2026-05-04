@@ -4332,7 +4332,7 @@ fastify.post("/leave/requests", { preValidation: [fastify.authenticate] }, async
       "ecom_Employee@odata.bind": `/ecom_personalinformations(${employeeGuid})`,
       "ecom_LeaveType@odata.bind": `/ecom_leavetypes(${leaveTypeId})`,
       // Format ecom_name sesuai contoh Anda
-      ecom_name: `${employeeInfo.ecom_nik} - ${employeeInfo.com_employeename} - Leave request`,
+      ecom_name: `${employeeInfo.ecom_nik} - ${employeeInfo.ecom_employeename} - Leave request`,
       ecom_startdate: startDate,
       ecom_enddate: endDateStr,
       ecom_returndate: returnDateStr, // Add return date
