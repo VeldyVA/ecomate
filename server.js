@@ -1313,13 +1313,27 @@ function isLikelyGeneralConversation(text) {
   return generalPatterns.some((re) => re.test(lower));
 }
 
+function buildGeneralReplyFallback(messageText) {
+  const lower = String(messageText || '').toLowerCase();
+  if (/terima\s*kasih|makasih|thanks|thank\s*you/.test(lower)) {
+    return 'Sama-sama. Kalau kamu mau, aku bisa bantu jelasin layanan HR yang tersedia juga.';
+  }
+  if (/siapa\s+kamu|kamu\s+siapa/.test(lower)) {
+    return 'Aku asisten HR ecomate. Aku bisa bantu ngobrol santai dulu, lalu kalau perlu kita lanjut ke info profil, cuti, posisi, development, atau peer review.';
+  }
+  return 'Boleh, tanya aja santai. Kalau nanti kamu butuh data HR tertentu, kasih tahu detailnya ya.';
+}
+
 async function tryGeneralAIReply(messageText) {
   const prompt = [
     'Anda adalah asisten HR internal Ecomate di Instagram DM.',
-    'Jika user masih sapaan/basa-basi/pertanyaan umum, balas secara natural, ramah, dan singkat dalam Bahasa Indonesia.',
+    'Jika user masih sapaan/basa-basi/pertanyaan umum, balas secara natural, ramah, santai profesional, dan singkat dalam Bahasa Indonesia.',
+    'Gunakan tone hangat dan tidak kaku, seperti human assistant yang helpful.',
     'Jangan panggil endpoint API untuk mode ini.',
+    'Jangan mengarang data karyawan atau angka apa pun.',
+    'Jika user belum minta data spesifik, jangan paksa flow login/data retrieval.',
     'Arahkan user secara halus ke topik HR yang tersedia jika relevan.',
-    'Maksimal 350 karakter.'
+    'Balasan 1-3 kalimat, maksimal 350 karakter.'
   ].join('\n');
 
   const result = await callGroqWithFallback(
@@ -1333,8 +1347,8 @@ async function tryGeneralAIReply(messageText) {
       timeoutMs: GROQ_FORMATTER_TIMEOUT_MS,
       retriesPerModel: GROQ_RETRIES_PER_MODEL,
       retryDelayMs: GROQ_RETRY_DELAY_MS,
-      temperature: 0.35,
-      maxTokens: 220,
+      temperature: 0.55,
+      maxTokens: 260,
     }
   );
 
@@ -1589,14 +1603,17 @@ async function tryAIResponse(senderId, messageText, userEmail) {
   if (/^\d{6}$/.test(text)) return { handled: false, reason: 'otp_message' };
   if (text.includes('@') && text.includes('.')) return { handled: false, reason: 'email_mapping_message' };
 
-  // For greetings/small talk, answer naturally without touching internal endpoints.
-  if (isLikelyGeneralConversation(text)) {
+  // For non-HR/general messages, answer naturally without touching internal endpoints.
+  const shouldUseGeneralReply = isLikelyGeneralConversation(text) || !hasHrDataIntent(text);
+  if (shouldUseGeneralReply) {
     try {
       const generalReply = await tryGeneralAIReply(text);
       if (generalReply) return { handled: true, responseText: generalReply };
     } catch (e) {
       fastify.log.warn({ msg: 'AI general reply failed', senderId, ...getGroqErrorDetails(e) });
+      return { handled: true, responseText: buildGeneralReplyFallback(text) };
     }
+    return { handled: true, responseText: buildGeneralReplyFallback(text) };
   }
 
   if (!userEmail) return { handled: false, reason: 'unmapped_user' };
