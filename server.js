@@ -896,6 +896,110 @@ function extractPeriodFromText(text) {
   return m ? m[1] : null;
 }
 
+function parseMonthToken(rawMonth) {
+  const value = String(rawMonth || '').trim().toLowerCase();
+  if (!value) return null;
+
+  if (/^(0?[1-9]|1[0-2])$/.test(value)) {
+    return Number(value);
+  }
+
+  const monthMap = {
+    january: 1, jan: 1, januari: 1,
+    february: 2, feb: 2, februari: 2,
+    march: 3, mar: 3, maret: 3,
+    april: 4, apr: 4,
+    may: 5, mei: 5,
+    june: 6, jun: 6, juni: 6,
+    july: 7, jul: 7, juli: 7,
+    august: 8, aug: 8, agustus: 8,
+    september: 9, sep: 9,
+    october: 10, oct: 10, oktober: 10,
+    november: 11, nov: 11,
+    december: 12, dec: 12, desember: 12,
+  };
+
+  return monthMap[value] || null;
+}
+
+function extractMonthYearFromText(text) {
+  const raw = String(text || '').trim();
+  const lower = raw.toLowerCase();
+  if (!lower) return null;
+
+  let m = lower.match(/\b(20\d{2})[-\/.](0?[1-9]|1[0-2])\b/);
+  if (m) {
+    const year = String(m[1]);
+    const monthNum = Number(m[2]);
+    return { year, monthNum, yearMonth: `${year}-${String(monthNum).padStart(2, '0')}` };
+  }
+
+  m = lower.match(/\b(0?[1-9]|1[0-2])[-\/.](20\d{2})\b/);
+  if (m) {
+    const monthNum = Number(m[1]);
+    const year = String(m[2]);
+    return { year, monthNum, yearMonth: `${year}-${String(monthNum).padStart(2, '0')}` };
+  }
+
+  const monthNamePattern = '(januari|january|jan|februari|february|feb|maret|march|mar|april|apr|mei|may|juni|june|jun|juli|july|jul|agustus|august|aug|september|sep|oktober|october|oct|november|nov|desember|december|dec)';
+  m = lower.match(new RegExp(`\\b${monthNamePattern}\\b(?:\\s*(?:tahun)?)?\\s*(20\\d{2})\\b`, 'i'));
+  if (!m) {
+    m = lower.match(new RegExp(`\\b(20\\d{2})\\b(?:\\s*(?:bulan)?)?\\s*${monthNamePattern}\\b`, 'i'));
+    if (m) {
+      const year = String(m[1]);
+      const monthNum = parseMonthToken(m[2]);
+      if (monthNum) return { year, monthNum, yearMonth: `${year}-${String(monthNum).padStart(2, '0')}` };
+    }
+  } else {
+    const monthNum = parseMonthToken(m[1]);
+    const year = String(m[2]);
+    if (monthNum) return { year, monthNum, yearMonth: `${year}-${String(monthNum).padStart(2, '0')}` };
+  }
+
+  const monthOnly = lower.match(new RegExp(`\\b${monthNamePattern}\\b`, 'i'));
+  const inferredYear = extractPeriodFromText(lower);
+  if (monthOnly && inferredYear) {
+    const monthNum = parseMonthToken(monthOnly[1]);
+    if (monthNum) {
+      return {
+        year: inferredYear,
+        monthNum,
+        yearMonth: `${inferredYear}-${String(monthNum).padStart(2, '0')}`
+      };
+    }
+  }
+
+  return null;
+}
+
+function canRoleAccessAdminEndpoint(permission, endpoint) {
+  const role = String(permission || '').toLowerCase();
+  const endpointPath = String(endpoint || '').trim();
+  if (!endpointPath.startsWith('/admin/')) return true;
+
+  if (role === 'admin') {
+    return [
+      '/admin/profile/search',
+      '/admin/leave-requests',
+      '/admin/position/search',
+      '/admin/developments/search',
+      '/admin/summary-peer-review/search',
+      '/admin/leave-balance/search'
+    ].includes(endpointPath);
+  }
+
+  if (role === 'co_admin') {
+    return [
+      '/admin/leave-requests',
+      '/admin/position/search',
+      '/admin/developments/search',
+      '/admin/leave-balance/search'
+    ].includes(endpointPath);
+  }
+
+  return false;
+}
+
 const GROQ_BASE_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const GROQ_MODELS_URL = 'https://api.groq.com/openai/v1/models';
 const GROQ_ROUTER_MODEL = process.env.GROQ_ROUTER_MODEL || 'mistral-7b-instruct';
@@ -1017,8 +1121,15 @@ function escapeODataString(value) {
 }
 
 function buildInstagramAiEndpointCatalog(permission) {
-  const isAdminUser = permission === 'admin';
+  const role = String(permission || '').toLowerCase();
+  const isAdminUser = role === 'admin';
+  const isPrivilegedUser = role === 'admin' || role === 'co_admin';
   const catalog = [
+    {
+      endpoint: '/whoami',
+      method: 'GET',
+      description: 'Identitas user login saat ini.'
+    },
     {
       endpoint: '/profile/personal-info',
       method: 'GET',
@@ -1057,6 +1168,45 @@ function buildInstagramAiEndpointCatalog(permission) {
     }
   ];
 
+  if (isPrivilegedUser) {
+    if (canRoleAccessAdminEndpoint(role, '/admin/leave-requests')) {
+      catalog.push({
+        endpoint: '/admin/leave-requests',
+        method: 'GET',
+        description: 'Daftar leave request admin/co-admin.',
+        optionalQuery: ['month', 'year', 'name', 'email', 'employeeId', 'startDate', 'endDate', 'for']
+      });
+    }
+
+    if (canRoleAccessAdminEndpoint(role, '/admin/position/search')) {
+      catalog.push({
+        endpoint: '/admin/position/search',
+        method: 'GET',
+        description: 'Cari riwayat posisi by name/email/employeeId.',
+        optionalQuery: ['name', 'email', 'employeeId']
+      });
+    }
+
+    if (canRoleAccessAdminEndpoint(role, '/admin/developments/search')) {
+      catalog.push({
+        endpoint: '/admin/developments/search',
+        method: 'GET',
+        description: 'Cari development by name/email.',
+        optionalQuery: ['name', 'email']
+      });
+    }
+
+    if (canRoleAccessAdminEndpoint(role, '/admin/leave-balance/search')) {
+      catalog.push({
+        endpoint: '/admin/leave-balance/search',
+        method: 'GET',
+        description: 'Cari saldo cuti karyawan admin/co-admin, wajib period + salah satu employeeId/email/name.',
+        requiredQuery: ['period'],
+        optionalQuery: ['employeeId', 'email', 'name']
+      });
+    }
+  }
+
   if (isAdminUser) {
     catalog.push(
       {
@@ -1066,35 +1216,10 @@ function buildInstagramAiEndpointCatalog(permission) {
         optionalQuery: ['name', 'email', 'id', 'code']
       },
       {
-        endpoint: '/admin/leave-requests',
-        method: 'GET',
-        description: 'Daftar leave request admin.',
-        optionalQuery: ['month', 'year', 'name']
-      },
-      {
-        endpoint: '/admin/position/search',
-        method: 'GET',
-        description: 'Cari riwayat posisi by name/email/employeeId.',
-        optionalQuery: ['name', 'email', 'employeeId']
-      },
-      {
-        endpoint: '/admin/developments/search',
-        method: 'GET',
-        description: 'Cari development by name/email.',
-        optionalQuery: ['name', 'email']
-      },
-      {
         endpoint: '/admin/summary-peer-review/search',
         method: 'GET',
         description: 'Cari summary peer review by name/email/employeeId.',
         optionalQuery: ['name', 'email', 'employeeId']
-      },
-      {
-        endpoint: '/admin/leave-balance/search',
-        method: 'GET',
-        description: 'Cari saldo cuti karyawan admin, wajib period + salah satu employeeId/email/name.',
-        requiredQuery: ['period'],
-        optionalQuery: ['employeeId', 'email', 'name']
       }
     );
   }
@@ -1292,10 +1417,22 @@ function hasHrDataIntent(text) {
     'cuti', 'leave', 'saldo', 'balance', 'riwayat', 'history',
     'development', 'pengembangan', 'peer review', 'review',
     'admin', 'karyawan', 'pegawai', 'staff', 'employee',
-    'login', 'otp', 'email', 'whoami'
+    'login', 'otp', 'email', 'whoami',
+    'ajukan', 'pengajuan', 'submit', 'request'
   ];
 
   return hrKeywords.some((keyword) => lower.includes(keyword));
+}
+
+function isLeaveSubmissionIntent(text) {
+  const lower = String(text || '').toLowerCase().trim();
+  if (!lower) return false;
+
+  if (/^pilih\s+cuti(?:\s+khusus)?\b/.test(lower)) return true;
+  if (/^ajukan\s+cuti(?:\s+khusus)?\b/.test(lower)) return true;
+  if (/\b(ajukan|pengajuan|submit|apply|request)\b/.test(lower) && /\bcuti|leave\b/.test(lower)) return true;
+
+  return false;
 }
 
 function isLikelyGeneralConversation(text) {
@@ -1451,6 +1588,7 @@ function inferAdminEndpointFromText(text) {
   const lower = String(text || '').toLowerCase();
   if (!lower) return null;
 
+  if (/status\s*(ajuan|pengajuan|request).*(cuti|leave)|(cuti|leave).*(status\s*(ajuan|pengajuan|request))/.test(lower)) return '/admin/leave-requests';
   if (/peer\s*review|penilaian|review/.test(lower)) return '/admin/summary-peer-review/search';
   if (/development|pengembangan|project|training|sertifikasi/.test(lower)) return '/admin/developments/search';
   if (/posisi|jabatan|grade|position/.test(lower)) return '/admin/position/search';
@@ -1496,12 +1634,32 @@ function sanitizeAdminQueryForEndpoint(endpoint, inputQuery, target, messageText
   }
 
   if (endpoint === '/admin/leave-requests') {
-    if (!/^20\d{2}$/.test(String(query.year || '')) && periodFromText) {
-      query.year = periodFromText;
+    const monthYear = extractMonthYearFromText(messageText);
+
+    const monthFromQuery = String(query.month || '').trim();
+    const yearFromQuery = /^20\d{2}$/.test(String(query.year || '').trim())
+      ? String(query.year).trim()
+      : null;
+
+    if (/^20\d{2}-(0[1-9]|1[0-2])$/.test(monthFromQuery)) {
+      if (!query.year) query.year = monthFromQuery.slice(0, 4);
+    } else {
+      const monthNumFromQuery = parseMonthToken(monthFromQuery);
+      const finalYear = yearFromQuery || monthYear?.year || periodFromText;
+
+      if (monthNumFromQuery && finalYear) {
+        query.month = `${finalYear}-${String(monthNumFromQuery).padStart(2, '0')}`;
+        query.year = finalYear;
+      } else if (!monthFromQuery && monthYear?.yearMonth) {
+        query.month = monthYear.yearMonth;
+        query.year = monthYear.year;
+      } else if (!query.year && periodFromText) {
+        query.year = periodFromText;
+      }
     }
-    if (!query.month && /\b(januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember|january|february|march|april|may|june|july|august|september|october|november|december)\b/i.test(String(messageText || ''))) {
-      // Let existing endpoint parser handle month text if planner misses it by keeping name/year only.
-    }
+
+    // Keep AI responses concise and stable for large admin leave queries.
+    query.for = 'ai';
   }
 
   const allowedKeysByEndpoint = {
@@ -1510,7 +1668,7 @@ function sanitizeAdminQueryForEndpoint(endpoint, inputQuery, target, messageText
     '/admin/developments/search': ['name', 'email'],
     '/admin/summary-peer-review/search': ['name', 'email', 'employeeId'],
     '/admin/leave-balance/search': ['period', 'employeeId', 'email', 'name'],
-    '/admin/leave-requests': ['month', 'year', 'name']
+    '/admin/leave-requests': ['month', 'year', 'name', 'email', 'employeeId', 'startDate', 'endDate', 'for']
   };
 
   const allowed = new Set(allowedKeysByEndpoint[endpoint] || []);
@@ -1538,7 +1696,7 @@ function sanitizeAdminQueryForEndpoint(endpoint, inputQuery, target, messageText
 
 function applyAdminEndpointGuard(planned, permission, messageText, userEmail) {
   if (!planned || planned.action !== 'api_call') return { planned };
-  if (permission !== 'admin') return { planned };
+  if (!['admin', 'co_admin'].includes(String(permission || '').toLowerCase())) return { planned };
 
   const target = extractAdminTarget(messageText, userEmail);
   if (!looksLikeOtherEmployeeIntent(messageText, target)) return { planned };
@@ -1559,6 +1717,12 @@ function applyAdminEndpointGuard(planned, permission, messageText, userEmail) {
   const inferredEndpoint = inferAdminEndpointFromText(messageText);
   const mappedEndpoint = inferredEndpoint || remap[endpoint] || (endpoint.startsWith('/admin/') ? endpoint : null);
   if (!mappedEndpoint) return { planned };
+
+  if (!canRoleAccessAdminEndpoint(permission, mappedEndpoint)) {
+    return {
+      directReply: 'Untuk permintaan ini, akun Anda belum memiliki akses. Gunakan akun admin atau minta admin membantu.'
+    };
+  }
 
   if (mappedEndpoint === '/admin/summary-peer-review/search' && permission !== 'admin') {
     return {
@@ -1603,6 +1767,21 @@ async function tryAIResponse(senderId, messageText, userEmail) {
   if (/^\d{6}$/.test(text)) return { handled: false, reason: 'otp_message' };
   if (text.includes('@') && text.includes('.')) return { handled: false, reason: 'email_mapping_message' };
 
+  // Leave submission is a structured multi-step flow; process it directly to avoid planner fallback.
+  if (isLeaveSubmissionIntent(text)) {
+    if (!userEmail) return { handled: false, reason: 'unmapped_user' };
+    try {
+      const submissionResult = await submitLeaveRequestViaDm(userEmail, text, senderId);
+      const responseText = formatInstagramResponse(submissionResult || { ok: false, action: 'unknown' }, 'submit_leave');
+      if (String(responseText || '').trim()) {
+        return { handled: true, responseText: String(responseText).slice(0, 900) };
+      }
+    } catch (e) {
+      fastify.log.warn({ msg: 'AI direct leave submission failed', senderId, error: e?.message });
+    }
+    return { handled: false, reason: 'submit_leave_direct_failed' };
+  }
+
   // For non-HR/general messages, answer naturally without touching internal endpoints.
   const shouldUseGeneralReply = isLikelyGeneralConversation(text) || !hasHrDataIntent(text);
   if (shouldUseGeneralReply) {
@@ -1636,9 +1815,9 @@ async function tryAIResponse(senderId, messageText, userEmail) {
     '- Jika user menanyakan data HR, pilih action=api_call.',
     '- Jika user sapaan/basa-basi/pertanyaan umum, pilih action=direct_reply dan JANGAN api_call.',
     '- Jika user minta bantuan umum/menu/login, pilih action=direct_reply.',
-    '- HANYA role admin yang boleh akses endpoint /admin/*.',
-    '- Jika user BUKAN admin dan bertanya data karyawan lain, pilih direct_reply penolakan akses.',
-    '- Jika user admin dan bertanya tentang data karyawan lain, WAJIB pilih endpoint /admin/* yang sesuai, jangan endpoint data diri sendiri.',
+    '- Endpoint /admin/* hanya boleh untuk role admin/co_admin sesuai katalog role.',
+    '- Jika user bukan admin/co_admin dan bertanya data karyawan lain, pilih direct_reply penolakan akses.',
+    '- Jika user admin/co_admin dan bertanya data karyawan lain, WAJIB pilih endpoint /admin/* yang sesuai dari katalog, jangan endpoint data diri sendiri.',
     '- Jangan isi query/body yang tidak relevan.',
     '- period untuk saldo cuti harus YYYY.',
     '- Hindari operasi destruktif; prioritaskan endpoint GET.'
