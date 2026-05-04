@@ -1258,6 +1258,65 @@ async function callInternalApiWithJwt(endpoint, method, jwtToken, query = {}, bo
   return response.data;
 }
 
+function hasHrDataIntent(text) {
+  const lower = String(text || '').toLowerCase().trim();
+  if (!lower) return false;
+
+  const hrKeywords = [
+    'profil', 'profile', 'posisi', 'position', 'jabatan', 'grade',
+    'cuti', 'leave', 'saldo', 'balance', 'riwayat', 'history',
+    'development', 'pengembangan', 'peer review', 'review',
+    'admin', 'karyawan', 'pegawai', 'staff', 'employee',
+    'login', 'otp', 'email', 'whoami'
+  ];
+
+  return hrKeywords.some((keyword) => lower.includes(keyword));
+}
+
+function isLikelyGeneralConversation(text) {
+  const lower = String(text || '').toLowerCase().trim();
+  if (!lower) return false;
+  if (hasHrDataIntent(lower)) return false;
+
+  const generalPatterns = [
+    /^hai\b|^halo\b|^hello\b|^hi\b/,
+    /mau\s+tanya|boleh\s+tanya|tanya\s+dong|bisa\s+bantu/,
+    /siapa\s+kamu|kamu\s+siapa|lagi\s+apa|apa\s+kabar/,
+    /terima\s*kasih|makasih|thanks|thank\s*you/
+  ];
+
+  return generalPatterns.some((re) => re.test(lower));
+}
+
+async function tryGeneralAIReply(messageText) {
+  const prompt = [
+    'Anda adalah asisten HR internal Ecomate di Instagram DM.',
+    'Jika user masih sapaan/basa-basi/pertanyaan umum, balas secara natural, ramah, dan singkat dalam Bahasa Indonesia.',
+    'Jangan panggil endpoint API untuk mode ini.',
+    'Arahkan user secara halus ke topik HR yang tersedia jika relevan.',
+    'Maksimal 350 karakter.'
+  ].join('\n');
+
+  const result = await callGroqWithFallback(
+    [
+      { role: 'system', content: prompt },
+      { role: 'user', content: String(messageText || '').trim() }
+    ],
+    {
+      model: GROQ_FORMATTER_MODEL,
+      fallbackModels: GROQ_FORMATTER_FALLBACK_MODELS,
+      timeoutMs: GROQ_FORMATTER_TIMEOUT_MS,
+      retriesPerModel: GROQ_RETRIES_PER_MODEL,
+      retryDelayMs: GROQ_RETRY_DELAY_MS,
+      temperature: 0.35,
+      maxTokens: 220,
+    }
+  );
+
+  const reply = String(result?.content || '').trim();
+  return reply ? reply.slice(0, 350) : null;
+}
+
 function extractEmailFromText(text) {
   const m = String(text || '').match(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i);
   return m ? m[0].toLowerCase() : null;
@@ -1279,8 +1338,30 @@ function extractNameFromText(text) {
     .trim();
 
   if (!candidate) return null;
-  const invalid = ['saya', 'aku', 'sendiri', 'diri sendiri', 'me', 'myself', 'lain'];
-  if (invalid.includes(candidate.toLowerCase())) return null;
+
+  // Remove conversational tail words that are not part of a person's name.
+  candidate = candidate
+    .replace(/\b(dong|nih|ya|yah|deh|aja|sih|please|pls|tolong|bro|sis|kak|bang|mas|mba|mbak|min)\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!candidate) return null;
+
+  const invalidPhrases = [
+    'saya', 'aku', 'sendiri', 'diri sendiri', 'me', 'myself',
+    'lain', 'yang lain', 'orang lain', 'karyawan lain', 'pegawai lain'
+  ];
+  const lowerCandidate = candidate.toLowerCase();
+  if (invalidPhrases.includes(lowerCandidate)) return null;
+
+  const invalidTokens = new Set([
+    'yang', 'lain', 'dong', 'nih', 'ya', 'yah', 'deh', 'aja', 'sih',
+    'tolong', 'please', 'pls', 'karyawan', 'pegawai', 'staff', 'employee',
+    'orang', 'data', 'profil', 'profile', 'cuti', 'saldo', 'review', 'development'
+  ]);
+  const tokens = lowerCandidate.split(/\s+/).filter(Boolean);
+  if (!tokens.length) return null;
+  if (tokens.every((t) => invalidTokens.has(t))) return null;
+
   return candidate;
 }
 
@@ -1460,6 +1541,17 @@ async function tryAIResponse(senderId, messageText, userEmail) {
   // Keep OTP, email mapping, and login bootstrap on legacy flow to avoid auth regressions.
   if (/^\d{6}$/.test(text)) return { handled: false, reason: 'otp_message' };
   if (text.includes('@') && text.includes('.')) return { handled: false, reason: 'email_mapping_message' };
+
+  // For greetings/small talk, answer naturally without touching internal endpoints.
+  if (isLikelyGeneralConversation(text)) {
+    try {
+      const generalReply = await tryGeneralAIReply(text);
+      if (generalReply) return { handled: true, responseText: generalReply };
+    } catch (e) {
+      fastify.log.warn({ msg: 'AI general reply failed', senderId, ...getGroqErrorDetails(e) });
+    }
+  }
+
   if (!userEmail) return { handled: false, reason: 'unmapped_user' };
 
   const jwtPayload = await getInstagramAiJwtPayloadByEmail(userEmail);
@@ -1478,6 +1570,7 @@ async function tryAIResponse(senderId, messageText, userEmail) {
     '{"action":"api_call|direct_reply","method":"GET|POST|PATCH|NONE","endpoint":"/path|NONE","query":{},"body":{},"reply":"jawaban langsung jika direct_reply"}',
     'Aturan:',
     '- Jika user menanyakan data HR, pilih action=api_call.',
+    '- Jika user sapaan/basa-basi/pertanyaan umum, pilih action=direct_reply dan JANGAN api_call.',
     '- Jika user minta bantuan umum/menu/login, pilih action=direct_reply.',
     '- HANYA role admin yang boleh akses endpoint /admin/*.',
     '- Jika user BUKAN admin dan bertanya data karyawan lain, pilih direct_reply penolakan akses.',
