@@ -878,6 +878,11 @@ const GROQ_FORMATTER_MODEL = process.env.GROQ_FORMATTER_MODEL || 'llama3-8b-8192
 const GROQ_ROUTER_FALLBACK_MODELS = String(process.env.GROQ_ROUTER_FALLBACK_MODELS || 'mixtral-8x7b-32768,llama-3.1-8b-instant');
 const GROQ_FORMATTER_FALLBACK_MODELS = String(process.env.GROQ_FORMATTER_FALLBACK_MODELS || 'llama-3.1-8b-instant');
 const GROQ_MODEL_CACHE_TTL_MS = Number(process.env.GROQ_MODEL_CACHE_TTL_MS || 300000);
+const GROQ_PLANNER_TIMEOUT_MS = Number(process.env.GROQ_PLANNER_TIMEOUT_MS || 12000);
+const GROQ_FORMATTER_TIMEOUT_MS = Number(process.env.GROQ_FORMATTER_TIMEOUT_MS || 10000);
+const GROQ_RETRIES_PER_MODEL = Number(process.env.GROQ_RETRIES_PER_MODEL || 1);
+const GROQ_RETRY_DELAY_MS = Number(process.env.GROQ_RETRY_DELAY_MS || 700);
+const INSTAGRAM_AI_INTERNAL_API_TIMEOUT_MS = Number(process.env.INSTAGRAM_AI_INTERNAL_API_TIMEOUT_MS || 12000);
 const INSTAGRAM_AI_INTERNAL_BASE_URL = (process.env.INSTAGRAM_AI_INTERNAL_BASE_URL || process.env.PUBLIC_BASE_URL || 'https://ecomate-phi.vercel.app').replace(/\/$/, '');
 
 let groqModelCache = {
@@ -958,8 +963,20 @@ function buildModelCandidates(primaryModel, fallbackModelList, availableModels =
 
 function shouldRetryGroqWithFallback(err) {
   const status = err?.response?.status;
-  if (status === 404 || status === 400) return true;
+  if (status === 404 || status === 400 || status === 408 || status === 409 || status === 425 || status === 429 || status >= 500) return true;
   return false;
+}
+
+function shouldRetrySameGroqModel(err) {
+  const status = err?.response?.status;
+  const code = String(err?.code || '').toUpperCase();
+  if (status === 408 || status === 409 || status === 425 || status === 429 || status >= 500) return true;
+  if (code === 'ECONNABORTED' || code === 'ETIMEDOUT' || code === 'ECONNRESET' || code === 'ENOTFOUND' || code === 'EAI_AGAIN') return true;
+  return false;
+}
+
+function waitMs(ms) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
 }
 
 function getGroqErrorDetails(err) {
@@ -1130,22 +1147,49 @@ async function callGroqWithFallback(messages, options = {}) {
     throw new Error('No candidate Groq model available for AI response');
   }
   let lastErr = null;
+  const maxRetriesPerModel = Math.max(0, Number(options.retriesPerModel ?? GROQ_RETRIES_PER_MODEL));
+  const retryDelayMs = Math.max(0, Number(options.retryDelayMs ?? GROQ_RETRY_DELAY_MS));
 
   for (let i = 0; i < candidateModels.length; i++) {
     const model = candidateModels[i];
-    try {
-      const content = await callGroq(messages, { ...options, model });
-      return { content, model, triedModels: candidateModels };
-    } catch (err) {
-      lastErr = err;
-      const retry = shouldRetryGroqWithFallback(err) && i < candidateModels.length - 1;
-      fastify.log.warn({
-        msg: 'Groq model call failed',
-        model,
-        retryWithFallback: retry,
-        ...getGroqErrorDetails(err)
-      });
-      if (!retry) break;
+    for (let attempt = 0; attempt <= maxRetriesPerModel; attempt++) {
+      try {
+        const content = await callGroq(messages, { ...options, model });
+        return { content, model, triedModels: candidateModels };
+      } catch (err) {
+        lastErr = err;
+        const retrySameModel = shouldRetrySameGroqModel(err) && attempt < maxRetriesPerModel;
+
+        if (retrySameModel) {
+          const delay = retryDelayMs * (attempt + 1);
+          fastify.log.warn({
+            msg: 'Groq model transient failure, retrying same model',
+            model,
+            attempt: attempt + 1,
+            maxRetriesPerModel,
+            retryDelayMs: delay,
+            ...getGroqErrorDetails(err)
+          });
+          await waitMs(delay);
+          continue;
+        }
+
+        const retryWithFallback = shouldRetryGroqWithFallback(err) && i < candidateModels.length - 1;
+        fastify.log.warn({
+          msg: 'Groq model call failed',
+          model,
+          attempt: attempt + 1,
+          maxRetriesPerModel,
+          retryWithFallback,
+          ...getGroqErrorDetails(err)
+        });
+
+        if (!retryWithFallback) {
+          throw err;
+        }
+
+        break;
+      }
     }
   }
 
@@ -1209,7 +1253,7 @@ async function callInternalApiWithJwt(endpoint, method, jwtToken, query = {}, bo
     },
     params: query,
     data: body,
-    timeout: 10000
+    timeout: INSTAGRAM_AI_INTERNAL_API_TIMEOUT_MS
   });
   return response.data;
 }
@@ -1264,7 +1308,9 @@ async function tryAIResponse(senderId, messageText, userEmail) {
       {
         model: GROQ_ROUTER_MODEL,
         fallbackModels: GROQ_ROUTER_FALLBACK_MODELS,
-        timeoutMs: 7000,
+        timeoutMs: GROQ_PLANNER_TIMEOUT_MS,
+        retriesPerModel: GROQ_RETRIES_PER_MODEL,
+        retryDelayMs: GROQ_RETRY_DELAY_MS,
         temperature: 0,
         maxTokens: 500,
         responseFormat: { type: 'json_object' }
@@ -1350,7 +1396,9 @@ async function tryAIResponse(senderId, messageText, userEmail) {
       {
         model: GROQ_FORMATTER_MODEL,
         fallbackModels: GROQ_FORMATTER_FALLBACK_MODELS,
-        timeoutMs: 7000,
+        timeoutMs: GROQ_FORMATTER_TIMEOUT_MS,
+        retriesPerModel: GROQ_RETRIES_PER_MODEL,
+        retryDelayMs: GROQ_RETRY_DELAY_MS,
         temperature: 0.2,
         maxTokens: 700
       }
