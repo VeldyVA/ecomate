@@ -876,6 +876,11 @@ const GROQ_ROUTER_MODEL = process.env.GROQ_ROUTER_MODEL || 'mistral-7b-instruct'
 const GROQ_FORMATTER_MODEL = process.env.GROQ_FORMATTER_MODEL || 'llama3-8b-8192';
 const INSTAGRAM_AI_INTERNAL_BASE_URL = (process.env.INSTAGRAM_AI_INTERNAL_BASE_URL || process.env.PUBLIC_BASE_URL || 'https://ecomate-phi.vercel.app').replace(/\/$/, '');
 
+function getGroqApiKey() {
+  const raw = process.env.GROQ_API_KEY || process.env.GROQ_APIKEY || process.env.GROQ_KEY || '';
+  return String(raw).trim().replace(/^['\"]|['\"]$/g, '');
+}
+
 function escapeODataString(value) {
   return String(value || '').replace(/'/g, "''");
 }
@@ -1000,7 +1005,7 @@ function parseGroqJson(rawContent) {
 }
 
 async function callGroq(messages, options = {}) {
-  const apiKey = process.env.GROQ_API_KEY;
+  const apiKey = getGroqApiKey();
   if (!apiKey) {
     throw new Error('GROQ_API_KEY is not configured');
   }
@@ -1094,7 +1099,7 @@ async function callInternalApiWithJwt(endpoint, method, jwtToken, query = {}, bo
 async function tryAIResponse(senderId, messageText, userEmail) {
   const text = String(messageText || '').trim();
   if (!text) return { handled: false, reason: 'empty_message' };
-  if (!process.env.GROQ_API_KEY) return { handled: false, reason: 'missing_groq_key' };
+  if (!getGroqApiKey()) return { handled: false, reason: 'missing_groq_key' };
 
   // Keep OTP, email mapping, and login bootstrap on legacy flow to avoid auth regressions.
   if (/^\d{6}$/.test(text)) return { handled: false, reason: 'otp_message' };
