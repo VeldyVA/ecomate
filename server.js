@@ -992,7 +992,7 @@ function escapeODataString(value) {
 }
 
 function buildInstagramAiEndpointCatalog(permission) {
-  const isAdminUser = ['admin', 'co_admin'].includes(permission);
+  const isAdminUser = permission === 'admin';
   const catalog = [
     {
       endpoint: '/profile/personal-info',
@@ -1258,6 +1258,112 @@ async function callInternalApiWithJwt(endpoint, method, jwtToken, query = {}, bo
   return response.data;
 }
 
+function extractEmailFromText(text) {
+  const m = String(text || '').match(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i);
+  return m ? m[0].toLowerCase() : null;
+}
+
+function extractNameFromText(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+
+  const quoted = raw.match(/["“]([^"”]{2,80})["”]/);
+  if (quoted?.[1]) return quoted[1].trim();
+
+  const keywordMatch = raw.match(/(?:karyawan|pegawai|staff|employee|atas\s+nama|nama|tentang|untuk)\s+([a-zA-Z][a-zA-Z .'-]{2,80})/i);
+  if (!keywordMatch?.[1]) return null;
+
+  let candidate = keywordMatch[1]
+    .replace(/\b(cuti|profil|profile|peer\s*review|review|development|posisi|position|saldo|tahun|bulan|periode)\b.*$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!candidate) return null;
+  const invalid = ['saya', 'aku', 'sendiri', 'diri sendiri', 'me', 'myself', 'lain'];
+  if (invalid.includes(candidate.toLowerCase())) return null;
+  return candidate;
+}
+
+function extractAdminTarget(text, currentEmail) {
+  const email = extractEmailFromText(text);
+  const me = String(currentEmail || '').toLowerCase();
+  if (email && email !== me) return { by: 'email', value: email };
+
+  const name = extractNameFromText(text);
+  if (name) return { by: 'name', value: name };
+
+  return null;
+}
+
+function looksLikeOtherEmployeeIntent(text, target) {
+  if (target) return true;
+  const lower = String(text || '').toLowerCase();
+  const otherHint = /(karyawan|pegawai|staff|employee|atas nama|orang lain|tim|anak buah|nama|email)/.test(lower);
+  const selfHint = /(profil saya|data saya|punya saya|diri saya|my profile|my data)/.test(lower);
+  return otherHint && !selfHint;
+}
+
+function applyAdminEndpointGuard(planned, permission, messageText, userEmail) {
+  if (!planned || planned.action !== 'api_call') return { planned };
+  if (permission !== 'admin') return { planned };
+
+  const target = extractAdminTarget(messageText, userEmail);
+  if (!looksLikeOtherEmployeeIntent(messageText, target)) return { planned };
+
+  const endpoint = String(planned.endpoint || '');
+  const method = String(planned.method || 'GET').toUpperCase();
+  const query = (planned.query && typeof planned.query === 'object') ? { ...planned.query } : {};
+
+  const remap = {
+    '/profile/personal-info': '/admin/profile/search',
+    '/profile/position': '/admin/position/search',
+    '/developments': '/admin/developments/search',
+    '/summary-peer-review': '/admin/summary-peer-review/search',
+    '/leave/requests': '/admin/leave-requests',
+    '/leave/balance': '/admin/leave-balance/search'
+  };
+
+  const mappedEndpoint = remap[endpoint];
+  if (!mappedEndpoint) return { planned };
+
+  if (mappedEndpoint === '/admin/summary-peer-review/search' && permission !== 'admin') {
+    return {
+      directReply: 'Untuk melihat peer review karyawan lain, akses ini khusus admin. Gunakan akun admin atau minta admin membantu.'
+    };
+  }
+
+  if (target?.by === 'email') {
+    query.email = query.email || target.value;
+  } else if (target?.by === 'name') {
+    query.name = query.name || target.value;
+  }
+
+  if (mappedEndpoint === '/admin/leave-balance/search') {
+    query.period = query.period || extractPeriodFromText(messageText) || String(new Date().getFullYear());
+    if (!query.email && !query.name && !query.employeeId) {
+      return {
+        directReply: 'Sebutkan nama atau email karyawan untuk cek saldo cuti. Contoh: cek saldo cuti Budi tahun 2026.'
+      };
+    }
+  }
+
+  if ((mappedEndpoint === '/admin/profile/search' || mappedEndpoint === '/admin/developments/search' || mappedEndpoint === '/admin/position/search' || mappedEndpoint === '/admin/summary-peer-review/search')
+      && !query.email && !query.name && !query.employeeId && !query.id && !query.code) {
+    return {
+      directReply: 'Sebutkan nama atau email karyawan yang ingin dicek agar saya bisa ambil data yang tepat.'
+    };
+  }
+
+  return {
+    planned: {
+      ...planned,
+      method,
+      endpoint: mappedEndpoint,
+      query
+    }
+  };
+}
+
 async function tryAIResponse(senderId, messageText, userEmail) {
   const text = String(messageText || '').trim();
   if (!text) return { handled: false, reason: 'empty_message' };
@@ -1285,6 +1391,9 @@ async function tryAIResponse(senderId, messageText, userEmail) {
     'Aturan:',
     '- Jika user menanyakan data HR, pilih action=api_call.',
     '- Jika user minta bantuan umum/menu/login, pilih action=direct_reply.',
+    '- HANYA role admin yang boleh akses endpoint /admin/*.',
+    '- Jika user BUKAN admin dan bertanya data karyawan lain, pilih direct_reply penolakan akses.',
+    '- Jika user admin dan bertanya tentang data karyawan lain, WAJIB pilih endpoint /admin/* yang sesuai, jangan endpoint data diri sendiri.',
     '- Jangan isi query/body yang tidak relevan.',
     '- period untuk saldo cuti harus YYYY.',
     '- Hindari operasi destruktif; prioritaskan endpoint GET.'
@@ -1337,6 +1446,20 @@ async function tryAIResponse(senderId, messageText, userEmail) {
     if (!directReply) return { handled: false, reason: 'empty_direct_reply' };
     return { handled: true, responseText: directReply };
   }
+
+  const otherEmployeeTarget = extractAdminTarget(messageText, userEmail);
+  if (otherEmployeeTarget && jwtPayload.permission !== 'admin') {
+    return {
+      handled: true,
+      responseText: 'Maaf, Anda tidak memiliki akses untuk melihat data karyawan lain. Anda hanya bisa mengakses data milik Anda sendiri.'
+    };
+  }
+
+  const guardedPlan = applyAdminEndpointGuard(planned, jwtPayload.permission, messageText, userEmail);
+  if (guardedPlan?.directReply) {
+    return { handled: true, responseText: String(guardedPlan.directReply).trim().slice(0, 900) };
+  }
+  planned = guardedPlan.planned || planned;
 
   const method = String(planned.method || 'GET').toUpperCase();
   const endpoint = String(planned.endpoint || '');
