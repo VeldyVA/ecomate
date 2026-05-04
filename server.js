@@ -872,13 +872,102 @@ function extractPeriodFromText(text) {
 }
 
 const GROQ_BASE_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const GROQ_MODELS_URL = 'https://api.groq.com/openai/v1/models';
 const GROQ_ROUTER_MODEL = process.env.GROQ_ROUTER_MODEL || 'mistral-7b-instruct';
 const GROQ_FORMATTER_MODEL = process.env.GROQ_FORMATTER_MODEL || 'llama3-8b-8192';
+const GROQ_ROUTER_FALLBACK_MODELS = String(process.env.GROQ_ROUTER_FALLBACK_MODELS || 'mixtral-8x7b-32768,llama-3.1-8b-instant');
+const GROQ_FORMATTER_FALLBACK_MODELS = String(process.env.GROQ_FORMATTER_FALLBACK_MODELS || 'llama-3.1-8b-instant');
+const GROQ_MODEL_CACHE_TTL_MS = Number(process.env.GROQ_MODEL_CACHE_TTL_MS || 300000);
 const INSTAGRAM_AI_INTERNAL_BASE_URL = (process.env.INSTAGRAM_AI_INTERNAL_BASE_URL || process.env.PUBLIC_BASE_URL || 'https://ecomate-phi.vercel.app').replace(/\/$/, '');
+
+let groqModelCache = {
+  models: [],
+  expiresAt: 0,
+};
 
 function getGroqApiKey() {
   const raw = process.env.GROQ_API_KEY || process.env.GROQ_APIKEY || process.env.GROQ_KEY || '';
   return String(raw).trim().replace(/^['\"]|['\"]$/g, '');
+}
+
+function parseModelList(raw) {
+  return String(raw || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function isGroqTextModelId(modelId) {
+  const id = String(modelId || '').toLowerCase();
+  if (!id) return false;
+  if (id.includes('whisper') || id.includes('tts') || id.includes('speech') || id.includes('transcrib')) return false;
+  const textHints = ['llama', 'mistral', 'mixtral', 'gemma', 'qwen', 'deepseek', 'gpt'];
+  return textHints.some((hint) => id.includes(hint));
+}
+
+async function getGroqAvailableModels() {
+  const now = Date.now();
+  if (groqModelCache.models.length && groqModelCache.expiresAt > now) {
+    return groqModelCache.models;
+  }
+
+  const apiKey = getGroqApiKey();
+  if (!apiKey) return [];
+
+  try {
+    const res = await axios.get(GROQ_MODELS_URL, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 5000,
+    });
+
+    const models = (res.data?.data || [])
+      .map((item) => String(item?.id || '').trim())
+      .filter((id) => id && isGroqTextModelId(id));
+
+    groqModelCache = {
+      models: Array.from(new Set(models)),
+      expiresAt: now + Math.max(10000, GROQ_MODEL_CACHE_TTL_MS),
+    };
+
+    return groqModelCache.models;
+  } catch (err) {
+    fastify.log.warn({ msg: 'Failed to fetch Groq model list', ...getGroqErrorDetails(err) });
+    return [];
+  }
+}
+
+function buildModelCandidates(primaryModel, fallbackModelList, availableModels = []) {
+  const configured = Array.from(new Set([
+    String(primaryModel || '').trim(),
+    ...parseModelList(fallbackModelList),
+  ].filter(Boolean)));
+
+  if (!availableModels.length) {
+    return configured;
+  }
+
+  const availableSet = new Set(availableModels);
+  const configuredAvailable = configured.filter((model) => availableSet.has(model));
+  const remainingAvailable = availableModels.filter((model) => !configuredAvailable.includes(model));
+
+  return Array.from(new Set([...configuredAvailable, ...remainingAvailable]));
+}
+
+function shouldRetryGroqWithFallback(err) {
+  const status = err?.response?.status;
+  if (status === 404 || status === 400) return true;
+  return false;
+}
+
+function getGroqErrorDetails(err) {
+  return {
+    status: err?.response?.status,
+    error: err?.message,
+    responseData: err?.response?.data,
+  };
 }
 
 function escapeODataString(value) {
@@ -1034,6 +1123,35 @@ async function callGroq(messages, options = {}) {
   return res.data?.choices?.[0]?.message?.content || '';
 }
 
+async function callGroqWithFallback(messages, options = {}) {
+  const availableModels = await getGroqAvailableModels();
+  const candidateModels = buildModelCandidates(options.model, options.fallbackModels, availableModels);
+  if (!candidateModels.length) {
+    throw new Error('No candidate Groq model available for AI response');
+  }
+  let lastErr = null;
+
+  for (let i = 0; i < candidateModels.length; i++) {
+    const model = candidateModels[i];
+    try {
+      const content = await callGroq(messages, { ...options, model });
+      return { content, model, triedModels: candidateModels };
+    } catch (err) {
+      lastErr = err;
+      const retry = shouldRetryGroqWithFallback(err) && i < candidateModels.length - 1;
+      fastify.log.warn({
+        msg: 'Groq model call failed',
+        model,
+        retryWithFallback: retry,
+        ...getGroqErrorDetails(err)
+      });
+      if (!retry) break;
+    }
+  }
+
+  throw lastErr || new Error('Groq call failed for all candidate models');
+}
+
 async function getInstagramAiJwtPayloadByEmail(email) {
   const cleanEmail = String(email || '').trim().toLowerCase();
   if (!cleanEmail) return null;
@@ -1130,7 +1248,7 @@ async function tryAIResponse(senderId, messageText, userEmail) {
 
   let planned;
   try {
-    const plannerRaw = await callGroq(
+    const plannerResult = await callGroqWithFallback(
       [
         { role: 'system', content: plannerPrompt },
         {
@@ -1145,15 +1263,22 @@ async function tryAIResponse(senderId, messageText, userEmail) {
       ],
       {
         model: GROQ_ROUTER_MODEL,
+        fallbackModels: GROQ_ROUTER_FALLBACK_MODELS,
         timeoutMs: 7000,
         temperature: 0,
         maxTokens: 500,
         responseFormat: { type: 'json_object' }
       }
     );
+    const plannerRaw = plannerResult.content;
     planned = parseGroqJson(plannerRaw);
   } catch (e) {
-    fastify.log.warn({ msg: 'AI planner failed', senderId, error: e.message });
+    fastify.log.warn({
+      msg: 'AI planner failed',
+      senderId,
+      modelsTried: buildModelCandidates(GROQ_ROUTER_MODEL, GROQ_ROUTER_FALLBACK_MODELS),
+      ...getGroqErrorDetails(e)
+    });
     return { handled: false, reason: 'planner_failed' };
   }
 
@@ -1208,7 +1333,7 @@ async function tryAIResponse(senderId, messageText, userEmail) {
   ].join('\n');
 
   try {
-    const formatted = await callGroq(
+    const formatterResult = await callGroqWithFallback(
       [
         { role: 'system', content: formatterPrompt },
         {
@@ -1224,17 +1349,24 @@ async function tryAIResponse(senderId, messageText, userEmail) {
       ],
       {
         model: GROQ_FORMATTER_MODEL,
+        fallbackModels: GROQ_FORMATTER_FALLBACK_MODELS,
         timeoutMs: 7000,
         temperature: 0.2,
         maxTokens: 700
       }
     );
+    const formatted = formatterResult.content;
 
     const responseText = String(formatted || '').trim();
     if (!responseText) return { handled: false, reason: 'empty_formatted_response' };
     return { handled: true, responseText: responseText.slice(0, 900) };
   } catch (e) {
-    fastify.log.warn({ msg: 'AI formatter failed', senderId, error: e.message });
+    fastify.log.warn({
+      msg: 'AI formatter failed',
+      senderId,
+      modelsTried: buildModelCandidates(GROQ_FORMATTER_MODEL, GROQ_FORMATTER_FALLBACK_MODELS),
+      ...getGroqErrorDetails(e)
+    });
     return { handled: false, reason: 'formatter_failed' };
   }
 }
