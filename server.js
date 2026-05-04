@@ -2444,7 +2444,9 @@ function formatInstagramResponse(data, intent) {
       }
       break;
     case 'submit_leave':
-      if (data.action === 'select_leave_type') {
+      if (data.action === 'need_start_date') {
+        response = data.message || 'Silakan lengkapi tanggal mulai cuti. Contoh: ajukan cuti 27 april 2026';
+      } else if (data.action === 'select_leave_type') {
         const items = Array.isArray(data.leaveTypes) ? data.leaveTypes : [];
         if (!items.length) {
           response = '❌ Jenis cuti tidak ditemukan saat ini. Coba lagi nanti.';
@@ -3081,6 +3083,7 @@ function parseFlexibleDateFromText(text) {
 
 function parseSubmitLeaveCommand(rawMessage) {
   const raw = String(rawMessage || '').trim();
+  const lowerRaw = raw.toLowerCase();
 
   // Step 2 flow: choose special leave type by option number
   let m = raw.match(/^pilih\s+cuti\s+khusus\s+(\d+)(?:\s+(\d+))?(?:\s+(.+))?$/i);
@@ -3122,15 +3125,23 @@ function parseSubmitLeaveCommand(rawMessage) {
   // Simplified command (special): user only sends start date
   if (/^ajukan\s+cuti\s+khusus\b/i.test(raw)) {
     const startDate = parseFlexibleDateFromText(raw);
-    if (!startDate) return null;
+    if (!startDate) return { mode: 'need_start_date', submissionKind: 'special' };
     return { mode: 'need_type', submissionKind: 'special', startDate };
   }
 
   // Simplified command: user only sends start date
   if (/^ajukan\s+cuti\b/i.test(raw)) {
     const startDate = parseFlexibleDateFromText(raw);
-    if (!startDate) return null;
+    if (!startDate) return { mode: 'need_start_date', submissionKind: 'regular' };
     return { mode: 'need_type', submissionKind: 'regular', startDate };
+  }
+
+  // Conversational leave submission intent, e.g. "mau ajukan cuti dong"
+  if (/\b(ajukan|pengajuan|submit|apply|request)\b/.test(lowerRaw) && /\b(cuti|leave)\b/.test(lowerRaw)) {
+    const submissionKind = /\bkhusus\b/.test(lowerRaw) ? 'special' : 'regular';
+    const startDate = parseFlexibleDateFromText(raw);
+    if (!startDate) return { mode: 'need_start_date', submissionKind };
+    return { mode: 'need_type', submissionKind, startDate };
   }
 
   return null;
@@ -3143,6 +3154,17 @@ async function submitLeaveRequestViaDm(email, rawMessage, senderId = null) {
       ok: false,
       error: 'format',
       message: 'Gunakan format sederhana: ajukan cuti <tanggal>. Contoh: ajukan cuti 27 april 2026'
+    };
+  }
+
+  if (parsed.mode === 'need_start_date') {
+    const isSpecial = parsed.submissionKind === 'special';
+    const commandHint = isSpecial ? 'ajukan cuti khusus' : 'ajukan cuti';
+    return {
+      ok: false,
+      action: 'need_start_date',
+      submissionKind: parsed.submissionKind || 'regular',
+      message: `Silakan lengkapi tanggal mulai cuti. Contoh: ${commandHint} 27 april 2026`
     };
   }
 
