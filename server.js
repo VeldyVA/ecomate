@@ -709,16 +709,21 @@ fastify.get("/admin/profile/search", { preValidation: [fastify.authenticate] }, 
   }
 
   const { id, code, email, name } = req.query;
+  const normalizedNameQuery = String(name || '').trim().toLowerCase();
+  const escapedId = escapeODataString(id);
+  const escapedCode = escapeODataString(code);
+  const escapedEmail = escapeODataString(email);
+  const escapedName = escapeODataString(name);
 
   let filter = "";
   if (id) {
-    filter = `ecom_employeepersonalinformationid eq '${id}'`;
+    filter = `ecom_employeepersonalinformationid eq '${escapedId}'`;
   } else if (code) {
-    filter = `ecom_employeeid eq '${code}'`;
+    filter = `ecom_employeeid eq '${escapedCode}'`;
   } else if (email) {
-    filter = `ecom_workemail eq '${email}'`;
+    filter = `ecom_workemail eq '${escapedEmail}'`;
   } else if (name) {
-    filter = `contains(ecom_employeename, '${name}')`;
+    filter = `contains(ecom_employeename, '${escapedName}')`;
   } else {
     return reply.code(400).send({ message: "Setidaknya satu dari 'id', 'code', 'email', atau 'name' harus diberikan." });
   }
@@ -727,6 +732,7 @@ fastify.get("/admin/profile/search", { preValidation: [fastify.authenticate] }, 
     const personalInfoData = await dataverseRequest(req, "get", "ecom_personalinformations", {
       params: {
         $filter: filter,
+        ...(name ? { $top: 25 } : { $top: 1 }),
         $select: [
           "ecom_personalinformationid", "ecom_nik", "ecom_employeename", "ecom_gender", "ecom_dateofbirth",
           "ecom_phonenumber", "statecode", "ecom_startwork",
@@ -744,7 +750,26 @@ fastify.get("/admin/profile/search", { preValidation: [fastify.authenticate] }, 
       return reply.code(404).send({ message: "Personal information record not found for the provided criteria." });
     }
 
-    const profile = personalInfoData.value[0]; // Admin search returns at most one profile
+    let profile = personalInfoData.value[0];
+    if (name && personalInfoData.value.length > 1 && normalizedNameQuery) {
+      const scoreNameMatch = (employeeName) => {
+        const n = String(employeeName || '').trim().toLowerCase();
+        if (!n) return 9999;
+        if (n === normalizedNameQuery) return 0;
+        if (n.startsWith(normalizedNameQuery)) return 1;
+        const idx = n.indexOf(normalizedNameQuery);
+        if (idx >= 0) return 10 + idx;
+        return 9999;
+      };
+
+      profile = personalInfoData.value
+        .map((p) => ({
+          item: p,
+          score: scoreNameMatch(p.ecom_employeename),
+          len: String(p.ecom_employeename || '').length,
+        }))
+        .sort((a, b) => (a.score - b.score) || (a.len - b.len))[0].item;
+    }
 
     // Fetch the latest job title from ecom_employeepositions
     try {
@@ -1322,6 +1347,48 @@ function extractEmailFromText(text) {
   return m ? m[0].toLowerCase() : null;
 }
 
+function normalizePersonNameCandidate(rawValue) {
+  let candidate = String(rawValue || '')
+    .replace(/[,:;!?()\[\]{}]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!candidate) return null;
+
+  // Keep text after the strongest marker when present.
+  const markerMatch = candidate.match(/(?:atas\s+nama|bernama|nama(?:nya)?|dengan\s+nama)\s+(.+)$/i);
+  if (markerMatch?.[1]) {
+    candidate = markerMatch[1].trim();
+  }
+
+  candidate = candidate
+    .replace(/^(?:yang\s+)?lain\b/i, '')
+    .replace(/^(?:orang|karyawan|pegawai|staff|employee)\s+lain\b/i, '')
+    .replace(/\b(dong|nih|ya|yah|deh|aja|sih|please|pls|tolong|min|bro|sis|kak|bang|mas|mba|mbak)\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!candidate) return null;
+
+  const invalidPhrases = new Set([
+    'saya', 'aku', 'sendiri', 'diri sendiri', 'me', 'myself',
+    'lain', 'yang lain', 'orang lain', 'karyawan lain', 'pegawai lain'
+  ]);
+  const lowerCandidate = candidate.toLowerCase();
+  if (invalidPhrases.has(lowerCandidate)) return null;
+
+  const invalidTokens = new Set([
+    'yang', 'lain', 'dong', 'nih', 'ya', 'yah', 'deh', 'aja', 'sih',
+    'tolong', 'please', 'pls', 'karyawan', 'pegawai', 'staff', 'employee',
+    'orang', 'data', 'profil', 'profile', 'cuti', 'saldo', 'review', 'development',
+    'atas', 'nama'
+  ]);
+  const tokens = lowerCandidate.split(/\s+/).filter(Boolean);
+  if (!tokens.length) return null;
+  if (tokens.every((t) => invalidTokens.has(t))) return null;
+
+  return candidate;
+}
+
 function extractNameFromText(text) {
   const raw = String(text || '').trim();
   if (!raw) return null;
@@ -1336,33 +1403,7 @@ function extractNameFromText(text) {
     .replace(/\b(cuti|profil|profile|peer\s*review|review|development|posisi|position|saldo|tahun|bulan|periode)\b.*$/i, '')
     .replace(/\s+/g, ' ')
     .trim();
-
-  if (!candidate) return null;
-
-  // Remove conversational tail words that are not part of a person's name.
-  candidate = candidate
-    .replace(/\b(dong|nih|ya|yah|deh|aja|sih|please|pls|tolong|bro|sis|kak|bang|mas|mba|mbak|min)\b/gi, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (!candidate) return null;
-
-  const invalidPhrases = [
-    'saya', 'aku', 'sendiri', 'diri sendiri', 'me', 'myself',
-    'lain', 'yang lain', 'orang lain', 'karyawan lain', 'pegawai lain'
-  ];
-  const lowerCandidate = candidate.toLowerCase();
-  if (invalidPhrases.includes(lowerCandidate)) return null;
-
-  const invalidTokens = new Set([
-    'yang', 'lain', 'dong', 'nih', 'ya', 'yah', 'deh', 'aja', 'sih',
-    'tolong', 'please', 'pls', 'karyawan', 'pegawai', 'staff', 'employee',
-    'orang', 'data', 'profil', 'profile', 'cuti', 'saldo', 'review', 'development'
-  ]);
-  const tokens = lowerCandidate.split(/\s+/).filter(Boolean);
-  if (!tokens.length) return null;
-  if (tokens.every((t) => invalidTokens.has(t))) return null;
-
-  return candidate;
+  return normalizePersonNameCandidate(candidate);
 }
 
 function extractAdminTarget(text, currentEmail) {
@@ -1408,6 +1449,11 @@ function inferAdminEndpointFromText(text) {
 function sanitizeAdminQueryForEndpoint(endpoint, inputQuery, target, messageText) {
   const query = (inputQuery && typeof inputQuery === 'object') ? { ...inputQuery } : {};
 
+  if (query.name) {
+    query.name = normalizePersonNameCandidate(query.name);
+    if (!query.name) delete query.name;
+  }
+
   // Planner sometimes puts plain name into employeeId; normalize it.
   if (query.employeeId && !isUuidLike(query.employeeId)) {
     const candidate = String(query.employeeId).trim();
@@ -1423,7 +1469,8 @@ function sanitizeAdminQueryForEndpoint(endpoint, inputQuery, target, messageText
     query.email = target.value;
     if (!query.name) delete query.name;
   } else if (target?.by === 'name') {
-    if (!query.email) query.name = target.value;
+    const normalizedTargetName = normalizePersonNameCandidate(target.value);
+    if (!query.email && normalizedTargetName) query.name = normalizedTargetName;
   }
 
   const periodFromText = extractPeriodFromText(messageText);
