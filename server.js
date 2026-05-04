@@ -1303,6 +1303,97 @@ function looksLikeOtherEmployeeIntent(text, target) {
   return otherHint && !selfHint;
 }
 
+function isUuidLike(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || '').trim());
+}
+
+function isEmailLike(value) {
+  return /^\S+@\S+\.\S+$/.test(String(value || '').trim());
+}
+
+function inferAdminEndpointFromText(text) {
+  const lower = String(text || '').toLowerCase();
+  if (!lower) return null;
+
+  if (/peer\s*review|penilaian|review/.test(lower)) return '/admin/summary-peer-review/search';
+  if (/development|pengembangan|project|training|sertifikasi/.test(lower)) return '/admin/developments/search';
+  if (/posisi|jabatan|grade|position/.test(lower)) return '/admin/position/search';
+  if (/riwayat|history|daftar\s*cuti|leave\s*request|pengajuan\s*cuti/.test(lower)) return '/admin/leave-requests';
+  if (/saldo|balance|cek\s*cuti|cuti\s*berapa/.test(lower)) return '/admin/leave-balance/search';
+  if (/profil|profile|biodata|data\s*karyawan|info\s*karyawan/.test(lower)) return '/admin/profile/search';
+  return null;
+}
+
+function sanitizeAdminQueryForEndpoint(endpoint, inputQuery, target, messageText) {
+  const query = (inputQuery && typeof inputQuery === 'object') ? { ...inputQuery } : {};
+
+  // Planner sometimes puts plain name into employeeId; normalize it.
+  if (query.employeeId && !isUuidLike(query.employeeId)) {
+    const candidate = String(query.employeeId).trim();
+    if (isEmailLike(candidate)) {
+      if (!query.email) query.email = candidate.toLowerCase();
+    } else {
+      if (!query.name) query.name = candidate;
+    }
+    delete query.employeeId;
+  }
+
+  if (target?.by === 'email') {
+    query.email = target.value;
+    if (!query.name) delete query.name;
+  } else if (target?.by === 'name') {
+    if (!query.email) query.name = target.value;
+  }
+
+  const periodFromText = extractPeriodFromText(messageText);
+
+  if (endpoint === '/admin/leave-balance/search') {
+    if (!/^20\d{2}$/.test(String(query.period || ''))) {
+      query.period = periodFromText || String(new Date().getFullYear());
+    }
+  }
+
+  if (endpoint === '/admin/leave-requests') {
+    if (!/^20\d{2}$/.test(String(query.year || '')) && periodFromText) {
+      query.year = periodFromText;
+    }
+    if (!query.month && /\b(januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember|january|february|march|april|may|june|july|august|september|october|november|december)\b/i.test(String(messageText || ''))) {
+      // Let existing endpoint parser handle month text if planner misses it by keeping name/year only.
+    }
+  }
+
+  const allowedKeysByEndpoint = {
+    '/admin/profile/search': ['name', 'email', 'id', 'code'],
+    '/admin/position/search': ['name', 'email', 'employeeId'],
+    '/admin/developments/search': ['name', 'email'],
+    '/admin/summary-peer-review/search': ['name', 'email', 'employeeId'],
+    '/admin/leave-balance/search': ['period', 'employeeId', 'email', 'name'],
+    '/admin/leave-requests': ['month', 'year', 'name']
+  };
+
+  const allowed = new Set(allowedKeysByEndpoint[endpoint] || []);
+  const sanitized = {};
+  for (const [k, v] of Object.entries(query)) {
+    if (allowed.has(k) && v !== null && v !== undefined && String(v).trim() !== '') {
+      sanitized[k] = typeof v === 'string' ? v.trim() : v;
+    }
+  }
+
+  if (endpoint === '/admin/position/search' || endpoint === '/admin/summary-peer-review/search') {
+    if (sanitized.employeeId && !isUuidLike(sanitized.employeeId)) {
+      const candidate = String(sanitized.employeeId).trim();
+      if (isEmailLike(candidate)) {
+        if (!sanitized.email) sanitized.email = candidate.toLowerCase();
+      } else {
+        if (!sanitized.name) sanitized.name = candidate;
+      }
+      delete sanitized.employeeId;
+    }
+  }
+
+  return sanitized;
+}
+
 function applyAdminEndpointGuard(planned, permission, messageText, userEmail) {
   if (!planned || planned.action !== 'api_call') return { planned };
   if (permission !== 'admin') return { planned };
@@ -1312,7 +1403,7 @@ function applyAdminEndpointGuard(planned, permission, messageText, userEmail) {
 
   const endpoint = String(planned.endpoint || '');
   const method = String(planned.method || 'GET').toUpperCase();
-  const query = (planned.query && typeof planned.query === 'object') ? { ...planned.query } : {};
+  const originalQuery = (planned.query && typeof planned.query === 'object') ? { ...planned.query } : {};
 
   const remap = {
     '/profile/personal-info': '/admin/profile/search',
@@ -1323,7 +1414,8 @@ function applyAdminEndpointGuard(planned, permission, messageText, userEmail) {
     '/leave/balance': '/admin/leave-balance/search'
   };
 
-  const mappedEndpoint = remap[endpoint];
+  const inferredEndpoint = inferAdminEndpointFromText(messageText);
+  const mappedEndpoint = inferredEndpoint || remap[endpoint] || (endpoint.startsWith('/admin/') ? endpoint : null);
   if (!mappedEndpoint) return { planned };
 
   if (mappedEndpoint === '/admin/summary-peer-review/search' && permission !== 'admin') {
@@ -1332,11 +1424,7 @@ function applyAdminEndpointGuard(planned, permission, messageText, userEmail) {
     };
   }
 
-  if (target?.by === 'email') {
-    query.email = query.email || target.value;
-  } else if (target?.by === 'name') {
-    query.name = query.name || target.value;
-  }
+  const query = sanitizeAdminQueryForEndpoint(mappedEndpoint, originalQuery, target, messageText);
 
   if (mappedEndpoint === '/admin/leave-balance/search') {
     query.period = query.period || extractPeriodFromText(messageText) || String(new Date().getFullYear());
