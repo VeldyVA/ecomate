@@ -1513,7 +1513,7 @@ function buildCapabilitiesReplyText() {
 }
 
 function buildServiceChannelReplyText() {
-  return 'User dapat kontak kamu via whatsapp (+6281280393537), web dashboard (https://ecomate-dashboard.lovable.app) dan browser (https://app.qlar.ai/ecomate) jika mau diskusi dengan pengalaman lebih lengkap.';
+  return 'Kamu bisa kontak aku via whatsapp (+6281280393537), web dashboard (https://ecomate-dashboard.lovable.app), dan browser (https://app.qlar.ai/ecomate) kalau mau diskusi dengan pengalaman yang lebih lengkap.';
 }
 
 function buildInactivityFollowupText() {
