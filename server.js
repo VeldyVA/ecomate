@@ -1864,6 +1864,59 @@ function applyAdminEndpointGuard(planned, permission, messageText, userEmail) {
   };
 }
 
+function buildDirectAdminPlan(permission, messageText, userEmail) {
+  const role = String(permission || '').toLowerCase();
+  if (!['admin', 'co_admin'].includes(role)) return null;
+
+  const target = extractAdminTarget(messageText, userEmail);
+  if (!looksLikeOtherEmployeeIntent(messageText, target)) return null;
+
+  const endpoint = inferAdminEndpointFromText(messageText);
+  if (!endpoint) return {
+    directReply: 'Untuk data karyawan lain, sebutkan kebutuhanmu lebih spesifik ya. Contoh: cek profil Dewi, status ajuan cuti tim Mei 2026, atau saldo cuti Budi tahun 2026.'
+  };
+
+  if (!canRoleAccessAdminEndpoint(role, endpoint)) {
+    return {
+      directReply: 'Untuk permintaan ini, akun Anda belum memiliki akses. Gunakan akun admin atau minta admin membantu.'
+    };
+  }
+
+  if (endpoint === '/admin/summary-peer-review/search' && role !== 'admin') {
+    return {
+      directReply: 'Untuk melihat peer review karyawan lain, akses ini khusus admin. Gunakan akun admin atau minta admin membantu.'
+    };
+  }
+
+  const query = sanitizeAdminQueryForEndpoint(endpoint, {}, target, messageText);
+
+  if (endpoint === '/admin/leave-balance/search') {
+    query.period = query.period || extractPeriodFromText(messageText) || String(new Date().getFullYear());
+    if (!query.email && !query.name && !query.employeeId) {
+      return {
+        directReply: 'Sebutkan nama atau email karyawan untuk cek saldo cuti. Contoh: cek saldo cuti Budi tahun 2026.'
+      };
+    }
+  }
+
+  if ((endpoint === '/admin/profile/search' || endpoint === '/admin/developments/search' || endpoint === '/admin/position/search' || endpoint === '/admin/summary-peer-review/search')
+      && !query.email && !query.name && !query.employeeId && !query.id && !query.code) {
+    return {
+      directReply: 'Sebutkan nama atau email karyawan yang ingin dicek agar saya bisa ambil data yang tepat.'
+    };
+  }
+
+  return {
+    planned: {
+      action: 'api_call',
+      method: 'GET',
+      endpoint,
+      query,
+      body: {}
+    }
+  };
+}
+
 async function tryAIResponse(senderId, messageText, userEmail) {
   const text = String(messageText || '').trim();
   if (!text) return { handled: false, reason: 'empty_message' };
@@ -1910,6 +1963,86 @@ async function tryAIResponse(senderId, messageText, userEmail) {
 
   const shortLivedJwt = await fastify.jwt.sign(jwtPayload, { expiresIn: '10m' });
   const endpointCatalog = buildInstagramAiEndpointCatalog(jwtPayload.permission);
+
+  const directAdminPlan = buildDirectAdminPlan(jwtPayload.permission, messageText, userEmail);
+  if (directAdminPlan?.directReply) {
+    return { handled: true, responseText: String(directAdminPlan.directReply).trim().slice(0, 900) };
+  }
+  if (directAdminPlan?.planned) {
+    const planned = directAdminPlan.planned;
+    const method = String(planned.method || 'GET').toUpperCase();
+    const endpoint = String(planned.endpoint || '');
+    const allowedTarget = endpointCatalog.find((e) => e.endpoint === endpoint && e.method === method);
+    if (!allowedTarget) {
+      return { handled: false, reason: 'direct_admin_endpoint_not_allowed' };
+    }
+
+    let apiData;
+    try {
+      apiData = await callInternalApiWithJwt(endpoint, method, shortLivedJwt, planned.query || {}, undefined);
+    } catch (e) {
+      fastify.log.warn({
+        msg: 'AI direct admin API call failed',
+        senderId,
+        endpoint,
+        method,
+        status: e.response?.status,
+        error: e.message,
+        responseData: e.response?.data
+      });
+      return { handled: false, reason: 'direct_admin_api_failed' };
+    }
+
+    const formatterPrompt = [
+      'Anda adalah asisten HR untuk balasan Instagram DM.',
+      'Tugas: ubah hasil API menjadi jawaban natural Bahasa Indonesia, ringkas tapi informatif.',
+      'Aturan output:',
+      '- Maksimum 900 karakter.',
+      '- Gunakan bullet jika data list.',
+      '- Jangan halusinasi data yang tidak ada.',
+      '- Jika data kosong, jelaskan dengan sopan.',
+      '- Jangan tampilkan JSON mentah.'
+    ].join('\n');
+
+    try {
+      const formatterResult = await callGroqWithFallback(
+        [
+          { role: 'system', content: formatterPrompt },
+          {
+            role: 'user',
+            content: JSON.stringify({
+              originalMessage: text,
+              endpoint,
+              method,
+              query: planned.query || {},
+              apiData
+            })
+          }
+        ],
+        {
+          model: GROQ_FORMATTER_MODEL,
+          fallbackModels: GROQ_FORMATTER_FALLBACK_MODELS,
+          timeoutMs: GROQ_FORMATTER_TIMEOUT_MS,
+          retriesPerModel: GROQ_RETRIES_PER_MODEL,
+          retryDelayMs: GROQ_RETRY_DELAY_MS,
+          temperature: 0.2,
+          maxTokens: 700
+        }
+      );
+
+      const responseText = String(formatterResult?.content || '').trim();
+      if (!responseText) return { handled: false, reason: 'direct_admin_empty_formatted_response' };
+      return { handled: true, responseText: responseText.slice(0, 900) };
+    } catch (e) {
+      fastify.log.warn({
+        msg: 'AI direct admin formatter failed',
+        senderId,
+        modelsTried: buildModelCandidates(GROQ_FORMATTER_MODEL, GROQ_FORMATTER_FALLBACK_MODELS),
+        ...getGroqErrorDetails(e)
+      });
+      return { handled: false, reason: 'direct_admin_formatter_failed' };
+    }
+  }
 
   const plannerPrompt = [
     'Anda adalah router intent untuk HR API.',
