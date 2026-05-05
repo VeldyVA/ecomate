@@ -1452,13 +1452,19 @@ function isLikelyGeneralConversation(text) {
 
 function buildGeneralReplyFallback(messageText) {
   const lower = String(messageText || '').toLowerCase();
+  if (/(bisa\s+bantu\s+apa\s*aja|bantu\s+apa\s*aja|fitur\s+apa\s*aja|apa\s+yang\s+bisa\s+kamu\s+bantu)/.test(lower)) {
+    return [
+      'Di Instagram ini saya bisa bantu cek profil terbaru kamu, saldo cuti berdasarkan tahun, status ajuan cuti yang diajukan maupun yang telah berlalu (riwayat cuti), peer review, riwayat project (development), serta memproses ajuan cuti.',
+      'Mau mulai dari yang mana dulu? Aku siap bantu pelan-pelan sampai beres.'
+    ].join(' ');
+  }
   if (/terima\s*kasih|makasih|thanks|thank\s*you/.test(lower)) {
-    return 'Sama-sama. Kalau kamu mau, aku bisa bantu jelasin layanan HR yang tersedia juga.';
+    return 'Sama-sama. Senang bisa bantu. Kalau mau, kita bisa lanjut cek profil, saldo cuti, atau riwayat cuti kamu juga.';
   }
   if (/siapa\s+kamu|kamu\s+siapa/.test(lower)) {
-    return 'Aku asisten HR ecomate. Aku bisa bantu ngobrol santai dulu, lalu kalau perlu kita lanjut ke info profil, cuti, posisi, development, atau peer review.';
+    return 'Saya Ecomate- ecomindo HR buddy, HR assistant kamu di kantor. Ada yang dapat saya bantu?';
   }
-  return 'Boleh, tanya aja santai. Kalau nanti kamu butuh data HR tertentu, kasih tahu detailnya ya.';
+  return 'Boleh, tanya aja santai. Gimana kabarmu hari ini? Kalau kamu mau, kita bisa lanjut cek kebutuhan HR kamu sekarang.';
 }
 
 async function tryGeneralAIReply(messageText) {
@@ -1466,11 +1472,13 @@ async function tryGeneralAIReply(messageText) {
     'Anda adalah asisten HR internal Ecomate di Instagram DM.',
     'Jika user masih sapaan/basa-basi/pertanyaan umum, balas secara natural, ramah, santai profesional, dan singkat dalam Bahasa Indonesia.',
     'Gunakan tone hangat dan tidak kaku, seperti human assistant yang helpful.',
+    'Boleh sedikit lebih cerewet secara natural: sapa ramah, bisa tanya kabar, dan ajak lanjut percakapan dengan sopan.',
     'Jangan panggil endpoint API untuk mode ini.',
     'Jangan mengarang data karyawan atau angka apa pun.',
     'Jika user belum minta data spesifik, jangan paksa flow login/data retrieval.',
     'Arahkan user secara halus ke topik HR yang tersedia jika relevan.',
-    'Balasan 1-3 kalimat, maksimal 350 karakter.'
+    'Jika user bertanya kemampuan Anda, jawab bahwa di Instagram Anda dapat bantu: profil terbaru, saldo cuti tahunan, status ajuan/riwayat cuti, peer review, riwayat project (development), dan proses ajuan cuti.',
+    'Balasan 2-4 kalimat, maksimal 520 karakter.'
   ].join('\n');
 
   const result = await callGroqWithFallback(
@@ -1485,12 +1493,110 @@ async function tryGeneralAIReply(messageText) {
       retriesPerModel: GROQ_RETRIES_PER_MODEL,
       retryDelayMs: GROQ_RETRY_DELAY_MS,
       temperature: 0.55,
-      maxTokens: 260,
+      maxTokens: 380,
     }
   );
 
   const reply = String(result?.content || '').trim();
-  return reply ? reply.slice(0, 350) : null;
+  return reply ? reply.slice(0, 520) : null;
+}
+
+const INSTAGRAM_CONVERSATION_STATE_TTL_SECONDS = 2592000;
+const INSTAGRAM_IDLE_FOLLOWUP_MS = 3 * 60 * 1000;
+const instagramIdleFollowupTimers = new Map();
+
+function buildCapabilitiesReplyText() {
+  return [
+    'Di Instagram ini saya bisa bantu cek profil terbaru kamu, saldo cuti berdasarkan tahun, status ajuan cuti yg diajukan maupun yg telah berlalu (riwayat cuti), peer review, riwayat project (development) serta memproses ajuan cuti.',
+    'Mau mulai dari mana dulu? Biar aku bantu sampai tuntas.'
+  ].join(' ');
+}
+
+function buildServiceChannelReplyText() {
+  return 'User dapat kontak kamu via whatsapp (+6281280393537), web dashboard (https://ecomate-dashboard.lovable.app) dan browser (https://app.qlar.ai/ecomate) jika mau diskusi dengan pengalaman lebih lengkap.';
+}
+
+function buildInactivityFollowupText() {
+  return [
+    'Terima kasih ya sudah ngobrol bareng Ecomate.',
+    buildServiceChannelReplyText()
+  ].join(' ');
+}
+
+function isGreetingOnlyMessage(text) {
+  const lower = String(text || '').toLowerCase().trim();
+  if (!lower) return false;
+  if (hasHrDataIntent(lower)) return false;
+  return /^(hai|halo|hello|hi|pagi|siang|sore|malam|halo+\s+ecomate|hai+\s+ecomate)[\s!.,?]*$/.test(lower);
+}
+
+function isCapabilitiesQuestion(text) {
+  const lower = String(text || '').toLowerCase();
+  return /(bisa\s+bantu\s+apa\s*aja|bantu\s+apa\s*aja|fitur\s+apa\s*aja|apa\s+yang\s+bisa\s+kamu\s+bantu|kamu\s+bisa\s+apa)/.test(lower);
+}
+
+function isFrustratedMessage(text) {
+  const lower = String(text || '').toLowerCase();
+  return /(gak\s+puas|tidak\s+puas|kurang\s+puas|frustasi|frustrasi|kecewa|ribet|susah|ga\s+jelas|lemot|error\s+terus|gagal\s+terus|nyebelin)/.test(lower);
+}
+
+async function getConversationState(psid) {
+  try {
+    return await kv.get(`instagram:conversation:${psid}`);
+  } catch (e) {
+    fastify.log.error({ msg: 'getConversationState failed', e: e.message });
+    return null;
+  }
+}
+
+async function setConversationState(psid, nextState, ttl = INSTAGRAM_CONVERSATION_STATE_TTL_SECONDS) {
+  try {
+    await kv.setex(`instagram:conversation:${psid}`, ttl, nextState || {});
+  } catch (e) {
+    fastify.log.error({ msg: 'setConversationState failed', e: e.message });
+  }
+}
+
+function cancelInstagramIdleFollowup(psid) {
+  const timer = instagramIdleFollowupTimers.get(String(psid));
+  if (timer) {
+    clearTimeout(timer);
+    instagramIdleFollowupTimers.delete(String(psid));
+  }
+}
+
+function scheduleInstagramIdleFollowup(psid, expectedLastUserAt) {
+  const key = String(psid);
+  cancelInstagramIdleFollowup(key);
+
+  const timer = setTimeout(async () => {
+    try {
+      const state = await getConversationState(key);
+      if (!state) return;
+
+      const lastUserAt = Number(state.lastUserAt || 0);
+      if (lastUserAt !== Number(expectedLastUserAt || 0)) return;
+
+      const alreadySentAt = Number(state.lastInactivityFollowupAt || 0);
+      if (alreadySentAt && alreadySentAt >= lastUserAt) return;
+
+      const followupText = buildInactivityFollowupText();
+      await sendInstagramMessage(key, followupText, process.env.INSTAGRAM_ACCESS_TOKEN);
+      await sendInstagramServiceButtons(key, process.env.INSTAGRAM_ACCESS_TOKEN);
+
+      await setConversationState(key, {
+        ...state,
+        lastBotAt: Date.now(),
+        lastInactivityFollowupAt: Date.now()
+      });
+    } catch (e) {
+      fastify.log.error({ msg: 'instagram idle follow-up failed', psid: key, error: e.message });
+    } finally {
+      instagramIdleFollowupTimers.delete(key);
+    }
+  }, INSTAGRAM_IDLE_FOLLOWUP_MS);
+
+  instagramIdleFollowupTimers.set(key, timer);
 }
 
 function extractEmailFromText(text) {
@@ -3667,18 +3773,35 @@ async function handleInstagramMessage(senderId, messageText) {
   let shouldSendLoginButton = false;
   let shouldSendServiceButtons = false;
   let handledIntent = 'ai';
+  const now = Date.now();
 
   try {
     fastify.log.info({ msg: 'handleInstagramMessage started', senderId, messageText });
+    cancelInstagramIdleFollowup(senderId);
+
+    const conversationState = (await getConversationState(senderId)) || {};
+    const firstGreeting = !conversationState.introSent && isGreetingOnlyMessage(messageText);
+    const capabilityQuestion = isCapabilitiesQuestion(messageText);
+    const frustrationSignal = isFrustratedMessage(messageText);
+
     fastify.log.info({ msg: 'DEBUG: before getPSIDUserMapping' });
     let userMapping = await getPSIDUserMapping(senderId);
     let userEmail = userMapping?.email || null;
     fastify.log.info({ msg: 'DEBUG: after getPSIDUserMapping', userMapping });
-    const aiResult = await tryAIResponse(senderId, messageText, userEmail);
-    if (aiResult?.handled) {
+
+    if (firstGreeting) {
+      responseText = 'Saya Ecomate- ecomindo HR buddy, HR assistant kamu di kantor. Ada yang dapat saya bantu?';
+      handledIntent = 'intro';
+    } else if (capabilityQuestion) {
+      responseText = buildCapabilitiesReplyText();
+      handledIntent = 'capabilities';
+      shouldSendServiceButtons = true;
+    } else {
+      const aiResult = await tryAIResponse(senderId, messageText, userEmail);
+      if (aiResult?.handled) {
       responseText = aiResult.responseText;
       fastify.log.info({ msg: 'AI response handled', senderId, mapped: !!userEmail });
-    } else {
+      } else {
       fastify.log.info({ msg: 'AI response fallback', senderId, reason: aiResult?.reason || 'unknown' });
 
       const { intent, params } = parseIntent(messageText);
@@ -3804,9 +3927,28 @@ async function handleInstagramMessage(senderId, messageText) {
         }
         responseText = formatInstagramResponse(responseData, intent);
       }
+      }
+    }
+
+    if (frustrationSignal) {
+      responseText = [
+        String(responseText || '').trim(),
+        'Maaf kalau pengalamanmu belum memuaskan, aku ngerti ini bikin kesel.',
+        buildServiceChannelReplyText()
+      ].filter(Boolean).join('\n\n');
+      shouldSendServiceButtons = true;
     }
 
     fastify.log.info({ msg: 'instagram reply prepared', senderId, intent: handledIntent });
+
+    const nextConversationState = {
+      ...conversationState,
+      introSent: conversationState.introSent || firstGreeting,
+      lastUserAt: now,
+      lastBotAt: Date.now(),
+      lastIntent: handledIntent
+    };
+    await setConversationState(senderId, nextConversationState);
 
   } catch (e) {
     fastify.log.error({ msg: 'handleInstagramMessage unexpected', e: e.message });
@@ -3824,6 +3966,9 @@ async function handleInstagramMessage(senderId, messageText) {
   if (shouldSendServiceButtons) {
     await sendInstagramServiceButtons(senderId, process.env.INSTAGRAM_ACCESS_TOKEN);
   }
+
+  const latestState = (await getConversationState(senderId)) || {};
+  scheduleInstagramIdleFollowup(senderId, latestState.lastUserAt || now);
 }
 
 const EmojiMap = {
