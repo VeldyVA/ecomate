@@ -1899,10 +1899,8 @@ async function tryAIResponse(senderId, messageText, userEmail) {
     return { handled: false, reason: 'submit_leave_direct_failed' };
   }
 
-  // Leave status/history shortcut is only for employee self-service.
-  // Admin/co_admin should stay on planner flow so they can hit /admin/leave-requests.
-  const quickPermission = userEmail ? getPermissionByEmail(userEmail) : 'employee';
-  if (isLeaveStatusOrHistoryIntent(text) && !['admin', 'co_admin'].includes(quickPermission)) {
+  // Leave status/history should always use leave requests flow (not leave balance).
+  if (isLeaveStatusOrHistoryIntent(text)) {
     if (!userEmail) return { handled: false, reason: 'unmapped_user' };
     try {
       const leaveRequestsData = await getLeaveRequests(userEmail);
@@ -2105,11 +2103,6 @@ function parseIntent(messageText) {
   if (!text) return { intent: 'unknown', params: {} };
   if (text.startsWith('admin ')) {
     return { intent: 'admin_query', params: parseAdminCommand(messageText) };
-  }
-  if (/(status\s*(ajuan|pengajuan|request)?|riwayat|history|daftar cuti|pengajuan cuti|leave request)/.test(text)
-      && /(cuti|leave)/.test(text)
-      && /(semua\s*karyawan|karyawan\s+lain|seluruh\s*karyawan|tim|anggota\s+tim|pegawai\s+lain)/.test(text)) {
-    return { intent: 'admin_query', params: { action: 'leave_requests' } };
   }
   if (text.startsWith('pilih cuti')) return { intent: 'submit_leave', params: { raw_message: messageText } };
   if (text === 'help' || text === 'bantuan' || text === 'menu') return { intent: 'help', params: {} };
@@ -2416,23 +2409,27 @@ function toProfileDisplayValue(record, fieldName) {
 function toLeaveStatusLabel(record) {
   if (!record) return '-';
 
+  const statusMap = {
+    273700000: 'Menunggu Persetujuan Atasan',
+    273700001: 'Menunggu Persetujuan HR',
+    273700002: 'Disetujui',
+    273700003: 'Ditolak',
+    273700004: 'Dibatalkan',
+    273700005: 'Draf'
+  };
+
   const raw = record.ecom_leavestatus;
+  const numericCode = Number(raw);
+  if (Number.isFinite(numericCode) && statusMap[numericCode]) {
+    return statusMap[numericCode];
+  }
 
   const formatted = getDataverseFormattedValue(record, 'ecom_leavestatus');
   if (formatted) return formatted;
 
-  const normalizedCode = String(raw ?? '').trim();
-  const numericCode = Number(normalizedCode);
-
-  if (Number.isFinite(numericCode) && LeaveStatus?.[numericCode]?.id) {
-    return LeaveStatus[numericCode].id;
-  }
-
-  if (LeaveStatus?.[normalizedCode]?.id) {
-    return LeaveStatus[normalizedCode].id;
-  }
-
-  return normalizedCode || '-';
+  const key = String(raw || '').trim();
+  const mapped = LeaveStatus?.[key]?.id || LeaveStatus?.[raw]?.id;
+  return mapped || key || '-';
 }
 
 function formatInstagramResponse(data, intent) {
