@@ -1435,6 +1435,17 @@ function isLeaveSubmissionIntent(text) {
   return false;
 }
 
+function isLeaveStatusOrHistoryIntent(text) {
+  const lower = String(text || '').toLowerCase().trim();
+  if (!lower) return false;
+
+  const hasLeaveKeyword = /\b(cuti|leave)\b/.test(lower);
+  const hasStatusHistoryKeyword = /(status\s*(ajuan|pengajuan|request)?|riwayat|history|daftar\s*cuti|pengajuan\s*cuti|leave\s*request)/.test(lower);
+  const hasBalanceKeyword = /(saldo|balance|jatah|sisa\s*cuti|cek\s*cuti|cuti\s*berapa)/.test(lower);
+
+  return hasLeaveKeyword && hasStatusHistoryKeyword && !hasBalanceKeyword;
+}
+
 function isLikelyGeneralConversation(text) {
   const lower = String(text || '').toLowerCase().trim();
   if (!lower) return false;
@@ -1513,7 +1524,7 @@ function buildCapabilitiesReplyText() {
 }
 
 function buildServiceChannelReplyText() {
-  return 'User dapat kontak kamu via whatsapp (+6281280393537), web dashboard (https://ecomate-dashboard.lovable.app) dan browser (https://app.qlar.ai/ecomate) jika mau diskusi dengan pengalaman lebih lengkap.';
+  return 'Kamu bisa kontak aku via whatsapp (+6281280393537), web dashboard (https://ecomate-dashboard.lovable.app), dan browser (https://app.qlar.ai/ecomate) kalau mau diskusi dengan pengalaman yang lebih lengkap.';
 }
 
 function buildInactivityFollowupText() {
@@ -1888,6 +1899,21 @@ async function tryAIResponse(senderId, messageText, userEmail) {
     return { handled: false, reason: 'submit_leave_direct_failed' };
   }
 
+  // Leave status/history should always use leave requests flow (not leave balance).
+  if (isLeaveStatusOrHistoryIntent(text)) {
+    if (!userEmail) return { handled: false, reason: 'unmapped_user' };
+    try {
+      const leaveRequestsData = await getLeaveRequests(userEmail);
+      const responseText = formatInstagramResponse(leaveRequestsData || { requests: [] }, 'get_leave_requests');
+      if (String(responseText || '').trim()) {
+        return { handled: true, responseText: String(responseText).slice(0, 900) };
+      }
+    } catch (e) {
+      fastify.log.warn({ msg: 'AI direct leave requests failed', senderId, error: e?.message });
+    }
+    return { handled: false, reason: 'get_leave_requests_direct_failed' };
+  }
+
   // For non-HR/general messages, answer naturally without touching internal endpoints.
   const shouldUseGeneralReply = isLikelyGeneralConversation(text) || !hasHrDataIntent(text);
   if (shouldUseGeneralReply) {
@@ -2082,6 +2108,9 @@ function parseIntent(messageText) {
   if (text === 'help' || text === 'bantuan' || text === 'menu') return { intent: 'help', params: {} };
   if (text.includes('login') || text.includes('masuk')) return { intent: 'login', params: {} };
   if (text.includes('jenis cuti') || text.includes('tipe cuti') || text.includes('leave type')) return { intent: 'get_leave_types', params: {} };
+  if (/(status\s*(ajuan|pengajuan|request)?|riwayat|history|daftar cuti|pengajuan cuti|leave request)/.test(text) && /(cuti|leave)/.test(text)) {
+    return { intent: 'get_leave_requests', params: {} };
+  }
   if (text.includes('cek cuti') || text.includes('saldo') || text.includes('cuti berapa')) {
     return { intent: 'check_leave_balance', params: { period: extractPeriodFromText(text) } };
   }
@@ -2379,10 +2408,28 @@ function toProfileDisplayValue(record, fieldName) {
 
 function toLeaveStatusLabel(record) {
   if (!record) return '-';
+
+  const statusMap = {
+    273700000: 'Menunggu Persetujuan Atasan',
+    273700001: 'Menunggu Persetujuan HR',
+    273700002: 'Disetujui',
+    273700003: 'Ditolak',
+    273700004: 'Dibatalkan',
+    273700005: 'Draf'
+  };
+
+  const raw = record.ecom_leavestatus;
+  const numericCode = Number(raw);
+  if (Number.isFinite(numericCode) && statusMap[numericCode]) {
+    return statusMap[numericCode];
+  }
+
   const formatted = getDataverseFormattedValue(record, 'ecom_leavestatus');
   if (formatted) return formatted;
-  const mapped = LeaveStatus?.[record.ecom_leavestatus]?.id;
-  return mapped || record.ecom_leavestatus || '-';
+
+  const key = String(raw || '').trim();
+  const mapped = LeaveStatus?.[key]?.id || LeaveStatus?.[raw]?.id;
+  return mapped || key || '-';
 }
 
 function formatInstagramResponse(data, intent) {
