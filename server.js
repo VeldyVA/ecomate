@@ -622,7 +622,31 @@ fastify.decorate("authenticate", async (req, reply) => {
       }
     } else {
       // Format token salah atau tidak ada token setelah parsing
-      fastify.log.warn({ header: authHeader }, "Malformed Authorization header or empty token.");
+      const segCount = token ? token.split(".").length : 0;
+      let firstSegmentDecoded = null;
+      try {
+        if (token && segCount > 0) {
+          firstSegmentDecoded = Buffer
+            .from(token.split(".")[0], "base64url")
+            .toString("utf8")
+            .slice(0, 120);
+        }
+      } catch (_) { /* ignore decode errors */ }
+
+      fastify.log.warn(
+        {
+          msg: "Malformed Authorization header or empty token.",
+          headerPreview: String(authHeader || "").slice(0, 60),
+          tokenLength: token ? token.length : 0,
+          segmentCount: segCount,
+          firstSegmentDecoded,
+          userAgent: req.headers["user-agent"],
+          remoteAddress: req.ip,
+          path: req.url,
+          method: req.method,
+          referer: req.headers.referer || req.headers.origin || null
+        }
+      );
       return reply.code(401).send({ error: "Format token salah" });
     }
   }
@@ -3966,7 +3990,15 @@ fastify.get('/instagram/webhook', async (req, reply) => {
 
 // Message receiver (POST)
 fastify.post('/instagram/webhook', async (req, reply) => {
-  fastify.log.info({ msg: 'instagram webhook post', hasSignature: !!req.headers['x-hub-signature'] });
+  fastify.log.info({
+    msg: 'instagram webhook post',
+    hasSignature: !!req.headers['x-hub-signature'],
+    userAgent: req.headers['user-agent'],
+    remoteAddress: req.ip,
+    bodyPreview: typeof req.body === 'object'
+      ? JSON.stringify(req.body).slice(0, 400)
+      : String(req.body || '').slice(0, 400)
+  });
   try {
     const signature = req.headers['x-hub-signature'];
     const appSecret = process.env.INSTAGRAM_APP_SECRET;
