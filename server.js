@@ -1011,6 +1011,12 @@ const GROQ_PLANNER_TIMEOUT_MS = Number(process.env.GROQ_PLANNER_TIMEOUT_MS || 12
 const GROQ_FORMATTER_TIMEOUT_MS = Number(process.env.GROQ_FORMATTER_TIMEOUT_MS || 10000);
 const GROQ_RETRIES_PER_MODEL = Number(process.env.GROQ_RETRIES_PER_MODEL || 1);
 const GROQ_RETRY_DELAY_MS = Number(process.env.GROQ_RETRY_DELAY_MS || 700);
+const AI_PRIMARY_PROVIDER = String(process.env.AI_PRIMARY_PROVIDER || 'auto').trim().toLowerCase();
+const AI_ALLOW_GROQ_FALLBACK = String(process.env.AI_ALLOW_GROQ_FALLBACK || '').trim().toLowerCase();
+const QLAR_MCP_BASE_URL = String(process.env.QLAR_MCP_BASE_URL || '').trim().replace(/\/$/, '');
+const QLAR_MCP_API_KEY = String(process.env.QLAR_MCP_API_KEY || process.env.MCP_SERVER_TOKEN || '').trim();
+const QLAR_MCP_MODEL = String(process.env.QLAR_MCP_MODEL || '').trim();
+const QLAR_MCP_TIMEOUT_MS = Number(process.env.QLAR_MCP_TIMEOUT_MS || 12000);
 const INSTAGRAM_AI_INTERNAL_API_TIMEOUT_MS = Number(process.env.INSTAGRAM_AI_INTERNAL_API_TIMEOUT_MS || 12000);
 const INSTAGRAM_AI_INTERNAL_BASE_URL = (process.env.INSTAGRAM_AI_INTERNAL_BASE_URL || process.env.PUBLIC_BASE_URL || 'https://ecomate-phi.vercel.app').replace(/\/$/, '');
 
@@ -1022,6 +1028,48 @@ let groqModelCache = {
 function getGroqApiKey() {
   const raw = process.env.GROQ_API_KEY || process.env.GROQ_APIKEY || process.env.GROQ_KEY || '';
   return String(raw).trim().replace(/^['\"]|['\"]$/g, '');
+}
+
+function getQlarMcpConfig() {
+  return {
+    baseUrl: QLAR_MCP_BASE_URL,
+    apiKey: QLAR_MCP_API_KEY,
+    model: QLAR_MCP_MODEL,
+    timeoutMs: Math.max(3000, QLAR_MCP_TIMEOUT_MS)
+  };
+}
+
+function isQlarMcpConfigured() {
+  const cfg = getQlarMcpConfig();
+  return Boolean(cfg.baseUrl && cfg.apiKey);
+}
+
+function isExplicitQlarPrimary() {
+  return ['qlar', 'qlar_mcp', 'qlar-mcp', 'qlarmcp', 'mcp'].includes(AI_PRIMARY_PROVIDER);
+}
+
+function canFallbackToGroqFromQlar() {
+  if (['1', 'true', 'yes', 'on'].includes(AI_ALLOW_GROQ_FALLBACK)) return true;
+  if (['0', 'false', 'no', 'off'].includes(AI_ALLOW_GROQ_FALLBACK)) return false;
+  return !isExplicitQlarPrimary();
+}
+
+function getActiveAiProvider() {
+  if (isExplicitQlarPrimary()) return 'qlar_mcp';
+  if (AI_PRIMARY_PROVIDER === 'auto' || !AI_PRIMARY_PROVIDER) {
+    return isQlarMcpConfigured() ? 'qlar_mcp' : 'groq';
+  }
+  return 'groq';
+}
+
+function hasConfiguredPrimaryAi() {
+  const provider = getActiveAiProvider();
+  if (provider === 'qlar_mcp') {
+    if (isQlarMcpConfigured()) return true;
+    if (canFallbackToGroqFromQlar()) return Boolean(getGroqApiKey());
+    return false;
+  }
+  return Boolean(getGroqApiKey());
 }
 
 function parseModelList(raw) {
@@ -1346,6 +1394,115 @@ async function callGroqWithFallback(messages, options = {}) {
   throw lastErr || new Error('Groq call failed for all candidate models');
 }
 
+async function callQlarMcp(messages, options = {}) {
+  const cfg = getQlarMcpConfig();
+  if (!cfg.baseUrl || !cfg.apiKey) {
+    throw new Error('QLAR MCP is not configured');
+  }
+
+  const endpoint = `${cfg.baseUrl}/chat/completions`;
+  const model = options.model || cfg.model || GROQ_FORMATTER_MODEL;
+
+  const res = await axios.post(
+    endpoint,
+    {
+      model,
+      messages,
+      temperature: options.temperature ?? 0.1,
+      max_tokens: options.maxTokens ?? 800,
+      response_format: options.responseFormat,
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${cfg.apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: Number(options.timeoutMs || cfg.timeoutMs)
+    }
+  );
+
+  const content = res.data?.choices?.[0]?.message?.content || res.data?.content || '';
+  return String(content || '');
+}
+
+async function callQlarMcpWithFallback(messages, options = {}) {
+  const primaryModel = options.model || QLAR_MCP_MODEL || GROQ_FORMATTER_MODEL;
+  const fallbackModels = parseModelList(options.fallbackModels);
+  const candidates = Array.from(new Set([primaryModel, ...fallbackModels].filter(Boolean)));
+  if (!candidates.length) {
+    throw new Error('No candidate QLAR MCP model available for AI response');
+  }
+
+  let lastErr = null;
+  const maxRetriesPerModel = Math.max(0, Number(options.retriesPerModel ?? GROQ_RETRIES_PER_MODEL));
+  const retryDelayMs = Math.max(0, Number(options.retryDelayMs ?? GROQ_RETRY_DELAY_MS));
+
+  for (let i = 0; i < candidates.length; i++) {
+    const model = candidates[i];
+    for (let attempt = 0; attempt <= maxRetriesPerModel; attempt++) {
+      try {
+        const content = await callQlarMcp(messages, { ...options, model });
+        return { content, model, triedModels: candidates };
+      } catch (err) {
+        lastErr = err;
+        const retrySameModel = shouldRetrySameGroqModel(err) && attempt < maxRetriesPerModel;
+        if (retrySameModel) {
+          const delay = retryDelayMs * (attempt + 1);
+          fastify.log.warn({
+            msg: 'QLAR MCP model transient failure, retrying same model',
+            model,
+            attempt: attempt + 1,
+            maxRetriesPerModel,
+            retryDelayMs: delay,
+            status: err?.response?.status,
+            error: err?.message,
+            responseData: err?.response?.data
+          });
+          await waitMs(delay);
+          continue;
+        }
+
+        const retryWithFallback = shouldRetryGroqWithFallback(err) && i < candidates.length - 1;
+        fastify.log.warn({
+          msg: 'QLAR MCP model call failed',
+          model,
+          attempt: attempt + 1,
+          maxRetriesPerModel,
+          retryWithFallback,
+          status: err?.response?.status,
+          error: err?.message,
+          responseData: err?.response?.data
+        });
+
+        if (!retryWithFallback) throw err;
+        break;
+      }
+    }
+  }
+
+  throw lastErr || new Error('QLAR MCP call failed for all candidate models');
+}
+
+async function callPrimaryAiWithFallback(messages, options = {}) {
+  const primary = getActiveAiProvider();
+  if (primary === 'qlar_mcp') {
+    try {
+      return await callQlarMcpWithFallback(messages, options);
+    } catch (qlarErr) {
+      if (!canFallbackToGroqFromQlar() || !getGroqApiKey()) throw qlarErr;
+      fastify.log.warn({
+        msg: 'QLAR MCP primary failed, falling back to Groq',
+        status: qlarErr?.response?.status,
+        error: qlarErr?.message,
+        responseData: qlarErr?.response?.data
+      });
+      return await callGroqWithFallback(messages, options);
+    }
+  }
+
+  return await callGroqWithFallback(messages, options);
+}
+
 async function getInstagramAiJwtPayloadByEmail(email) {
   const cleanEmail = String(email || '').trim().toLowerCase();
   if (!cleanEmail) return null;
@@ -1481,7 +1638,7 @@ async function tryGeneralAIReply(messageText) {
     'Balasan 2-4 kalimat, maksimal 520 karakter.'
   ].join('\n');
 
-  const result = await callGroqWithFallback(
+  const result = await callPrimaryAiWithFallback(
     [
       { role: 'system', content: prompt },
       { role: 'user', content: String(messageText || '').trim() }
@@ -1917,10 +2074,10 @@ function buildDirectAdminPlan(permission, messageText, userEmail) {
   };
 }
 
-async function tryAIResponse(senderId, messageText, userEmail) {
+async function tryAIResponse(senderId, messageText, userEmail, recentHistory = []) {
   const text = String(messageText || '').trim();
   if (!text) return { handled: false, reason: 'empty_message' };
-  if (!getGroqApiKey()) return { handled: false, reason: 'missing_groq_key' };
+  if (!hasConfiguredPrimaryAi()) return { handled: false, reason: 'missing_ai_backend_config' };
 
   // Keep OTP, email mapping, and login bootstrap on legacy flow to avoid auth regressions.
   if (/^\d{6}$/.test(text)) return { handled: false, reason: 'otp_message' };
@@ -1942,7 +2099,9 @@ async function tryAIResponse(senderId, messageText, userEmail) {
   }
 
   // For non-HR/general messages, answer naturally without touching internal endpoints.
-  const shouldUseGeneralReply = isLikelyGeneralConversation(text) || !hasHrDataIntent(text);
+  // Exception: if there's recent bot context (e.g. bot asked for a name), treat the reply as HR-related.
+  const hasRecentBotQuestion = recentHistory.some(m => m.role === 'assistant');
+  const shouldUseGeneralReply = !hasRecentBotQuestion && (isLikelyGeneralConversation(text) || !hasHrDataIntent(text));
   if (shouldUseGeneralReply) {
     try {
       const generalReply = await tryGeneralAIReply(text);
@@ -2005,7 +2164,7 @@ async function tryAIResponse(senderId, messageText, userEmail) {
     ].join('\n');
 
     try {
-      const formatterResult = await callGroqWithFallback(
+      const formatterResult = await callPrimaryAiWithFallback(
         [
           { role: 'system', content: formatterPrompt },
           {
@@ -2064,9 +2223,11 @@ async function tryAIResponse(senderId, messageText, userEmail) {
 
   let planned;
   try {
-    const plannerResult = await callGroqWithFallback(
+    const historyMessages = (recentHistory || []).slice(-4).map(m => ({ role: m.role, content: m.content }));
+    const plannerResult = await callPrimaryAiWithFallback(
       [
         { role: 'system', content: plannerPrompt },
+        ...historyMessages,
         {
           role: 'user',
           content: JSON.stringify({
@@ -2165,7 +2326,7 @@ async function tryAIResponse(senderId, messageText, userEmail) {
   ].join('\n');
 
   try {
-    const formatterResult = await callGroqWithFallback(
+    const formatterResult = await callPrimaryAiWithFallback(
       [
         { role: 'system', content: formatterPrompt },
         {
@@ -3930,7 +4091,8 @@ async function handleInstagramMessage(senderId, messageText) {
       handledIntent = 'capabilities';
       shouldSendServiceButtons = true;
     } else {
-      const aiResult = await tryAIResponse(senderId, messageText, userEmail);
+      const recentHistory = Array.isArray(conversationState.recentHistory) ? conversationState.recentHistory : [];
+      const aiResult = await tryAIResponse(senderId, messageText, userEmail, recentHistory);
       if (aiResult?.handled) {
       responseText = aiResult.responseText;
       fastify.log.info({ msg: 'AI response handled', senderId, mapped: !!userEmail });
@@ -4074,12 +4236,20 @@ async function handleInstagramMessage(senderId, messageText) {
 
     fastify.log.info({ msg: 'instagram reply prepared', senderId, intent: handledIntent });
 
+    const recentHistory = Array.isArray(conversationState.recentHistory) ? conversationState.recentHistory : [];
+    const updatedHistory = [
+      ...recentHistory,
+      { role: 'user', content: String(messageText || '').slice(0, 300) },
+      { role: 'assistant', content: String(responseText || '').slice(0, 300) }
+    ].slice(-6);
+
     const nextConversationState = {
       ...conversationState,
       introSent: conversationState.introSent || firstGreeting,
       lastUserAt: now,
       lastBotAt: Date.now(),
-      lastIntent: handledIntent
+      lastIntent: handledIntent,
+      recentHistory: updatedHistory
     };
     await setConversationState(senderId, nextConversationState);
 
@@ -4141,6 +4311,539 @@ fastify.get('/apple-touch-icon-precomposed.png', (request, reply) => {
 
 fastify.get('/apple-touch-icon.png', (request, reply) => {
   reply.code(204).send();
+});
+
+const MCP_SERVER_TOKEN = String(process.env.MCP_SERVER_TOKEN || '').trim();
+
+function hasMcpAccess(req) {
+  if (!MCP_SERVER_TOKEN) return true;
+
+  const authHeader = String(req.headers.authorization || '').trim();
+  const bearer = authHeader.toLowerCase().startsWith('bearer ')
+    ? authHeader.slice(7).trim()
+    : null;
+  const direct = String(req.headers['x-mcp-token'] || '').trim();
+  return bearer === MCP_SERVER_TOKEN || direct === MCP_SERVER_TOKEN;
+}
+
+function mcpJson(id, result) {
+  return { jsonrpc: '2.0', id, result };
+}
+
+function mcpErr(id, code, message, data = undefined) {
+  return {
+    jsonrpc: '2.0',
+    id: id ?? null,
+    error: {
+      code,
+      message,
+      ...(data !== undefined ? { data } : {})
+    }
+  };
+}
+
+function mcpTextResult(payload, isError = false) {
+  const text = typeof payload === 'string'
+    ? payload
+    : JSON.stringify(payload, null, 2);
+  return {
+    content: [{ type: 'text', text }],
+    ...(isError ? { isError: true } : {})
+  };
+}
+
+async function buildMcpJwtByEmail(requesterEmail) {
+  const email = String(requesterEmail || '').trim().toLowerCase();
+  if (!email) throw new Error('requesterEmail is required');
+
+  const payload = await getInstagramAiJwtPayloadByEmail(email);
+  if (!payload?.employeeId) {
+    throw new Error(`JWT payload tidak ditemukan untuk email ${email}`);
+  }
+  return fastify.jwt.sign(payload, { expiresIn: '10m' });
+}
+
+async function callMcpInternalApiByEmail(requesterEmail, endpoint, method = 'GET', query = {}, body = undefined) {
+  const jwtToken = await buildMcpJwtByEmail(requesterEmail);
+  return callInternalApiWithJwt(endpoint, method, jwtToken, query, body);
+}
+
+const MCP_TOOLS = [
+  {
+    name: 'hr_whoami',
+    description: 'Cek identitas user login berdasarkan requesterEmail.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        requesterEmail: { type: 'string', description: 'Email kerja peminta' }
+      },
+      required: ['requesterEmail']
+    }
+  },
+  {
+    name: 'hr_get_profile',
+    description: 'User: ambil profil sendiri.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        requesterEmail: { type: 'string', description: 'Email kerja peminta' }
+      },
+      required: ['requesterEmail']
+    }
+  },
+  {
+    name: 'hr_get_position',
+    description: 'User: ambil posisi/jabatan sendiri.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        requesterEmail: { type: 'string', description: 'Email kerja peminta' }
+      },
+      required: ['requesterEmail']
+    }
+  },
+  {
+    name: 'hr_get_leave_types',
+    description: 'User: ambil daftar jenis cuti aktif.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        requesterEmail: { type: 'string', description: 'Email kerja peminta' }
+      },
+      required: ['requesterEmail']
+    }
+  },
+  {
+    name: 'hr_get_leave_balance',
+    description: 'User: cek saldo cuti sendiri berdasarkan period YYYY.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        requesterEmail: { type: 'string', description: 'Email kerja peminta' },
+        period: { type: 'string', description: 'Periode tahun, format YYYY' }
+      },
+      required: ['requesterEmail', 'period']
+    }
+  },
+  {
+    name: 'hr_get_leave_requests',
+    description: 'User: cek status/riwayat ajuan cuti sendiri.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        requesterEmail: { type: 'string', description: 'Email kerja peminta' }
+      },
+      required: ['requesterEmail']
+    }
+  },
+  {
+    name: 'hr_submit_leave',
+    description: 'User: ajukan cuti reguler.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        requesterEmail: { type: 'string', description: 'Email kerja peminta' },
+        leaveTypeId: { type: 'string', description: 'GUID leave type' },
+        startDate: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD' },
+        days: { type: 'number', description: 'Jumlah hari cuti' },
+        reason: { type: 'string', description: 'Alasan cuti (opsional)' }
+      },
+      required: ['requesterEmail', 'leaveTypeId', 'startDate', 'days']
+    }
+  },
+  {
+    name: 'hr_submit_special_leave',
+    description: 'User: ajukan cuti khusus.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        requesterEmail: { type: 'string', description: 'Email kerja peminta' },
+        leaveTypeId: { type: 'string', description: 'GUID leave type' },
+        startDate: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD' },
+        days: { type: 'number', description: 'Jumlah hari cuti' },
+        reason: { type: 'string', description: 'Alasan cuti (opsional)' }
+      },
+      required: ['requesterEmail', 'leaveTypeId', 'startDate', 'days']
+    }
+  },
+  {
+    name: 'hr_cancel_leave_request',
+    description: 'User: batalkan ajuan cuti sendiri.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        requesterEmail: { type: 'string', description: 'Email kerja peminta' },
+        leaveId: { type: 'string', description: 'ID leave request' }
+      },
+      required: ['requesterEmail', 'leaveId']
+    }
+  },
+  {
+    name: 'hr_get_developments',
+    description: 'User: cek riwayat project/development sendiri.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        requesterEmail: { type: 'string', description: 'Email kerja peminta' }
+      },
+      required: ['requesterEmail']
+    }
+  },
+  {
+    name: 'hr_get_peer_review_summary',
+    description: 'User: cek summary peer review sendiri.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        requesterEmail: { type: 'string', description: 'Email kerja peminta' }
+      },
+      required: ['requesterEmail']
+    }
+  },
+  {
+    name: 'hr_admin_profile_search',
+    description: 'Admin/co-admin: cari profil karyawan (name/email/id/code).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        requesterEmail: { type: 'string', description: 'Email admin/co-admin peminta' },
+        name: { type: 'string' },
+        email: { type: 'string' },
+        id: { type: 'string' },
+        code: { type: 'string' }
+      },
+      required: ['requesterEmail']
+    }
+  },
+  {
+    name: 'hr_admin_patch_profile',
+    description: 'Admin/co-admin: update profil karyawan berdasarkan employeeId.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        requesterEmail: { type: 'string', description: 'Email admin/co-admin peminta' },
+        employeeId: { type: 'string', description: 'GUID employee target' },
+        updates: {
+          type: 'object',
+          description: 'Object fields yang ingin diupdate sesuai schema endpoint PATCH /profile/:employeeId'
+        }
+      },
+      required: ['requesterEmail', 'employeeId', 'updates']
+    }
+  },
+  {
+    name: 'hr_admin_leave_requests',
+    description: 'Admin/co-admin: cek status/riwayat ajuan cuti karyawan lain.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        requesterEmail: { type: 'string', description: 'Email admin/co-admin peminta' },
+        month: { type: 'string', description: 'Format YYYY-MM (opsional)' },
+        year: { type: 'string', description: 'Format YYYY (opsional)' },
+        name: { type: 'string' },
+        email: { type: 'string' },
+        employeeId: { type: 'string' },
+        startDate: { type: 'string', description: 'Format YYYY-MM-DD (opsional)' },
+        endDate: { type: 'string', description: 'Format YYYY-MM-DD (opsional)' }
+      },
+      required: ['requesterEmail']
+    }
+  },
+  {
+    name: 'hr_admin_leave_balance_search',
+    description: 'Admin/co-admin: cek saldo cuti karyawan lain.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        requesterEmail: { type: 'string', description: 'Email admin/co-admin peminta' },
+        period: { type: 'string', description: 'Format YYYY' },
+        employeeId: { type: 'string' },
+        email: { type: 'string' },
+        name: { type: 'string' }
+      },
+      required: ['requesterEmail', 'period']
+    }
+  },
+  {
+    name: 'hr_admin_position_search',
+    description: 'Admin/co-admin: cek posisi/jabatan karyawan lain.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        requesterEmail: { type: 'string', description: 'Email admin/co-admin peminta' },
+        name: { type: 'string' },
+        email: { type: 'string' },
+        employeeId: { type: 'string' }
+      },
+      required: ['requesterEmail']
+    }
+  },
+  {
+    name: 'hr_admin_developments_search',
+    description: 'Admin/co-admin: cek development karyawan lain.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        requesterEmail: { type: 'string', description: 'Email admin/co-admin peminta' },
+        name: { type: 'string' },
+        email: { type: 'string' }
+      },
+      required: ['requesterEmail']
+    }
+  },
+  {
+    name: 'hr_admin_peer_review_search',
+    description: 'Admin: cek summary peer review karyawan lain.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        requesterEmail: { type: 'string', description: 'Email admin/co-admin peminta' },
+        name: { type: 'string' },
+        email: { type: 'string' },
+        employeeId: { type: 'string' }
+      },
+      required: ['requesterEmail']
+    }
+  }
+];
+
+async function handleMcpToolCall(name, args = {}) {
+  const toolName = String(name || '').trim();
+  const requesterEmail = String(args.requesterEmail || '').trim().toLowerCase();
+
+  if (!requesterEmail) {
+    throw new Error('requesterEmail is required');
+  }
+
+  if (toolName === 'hr_whoami') {
+    return await callMcpInternalApiByEmail(requesterEmail, '/whoami', 'GET');
+  }
+
+  if (toolName === 'hr_get_profile') {
+    return await callMcpInternalApiByEmail(requesterEmail, '/profile/personal-info', 'GET');
+  }
+  if (toolName === 'hr_get_position') {
+    return await callMcpInternalApiByEmail(requesterEmail, '/profile/position', 'GET');
+  }
+  if (toolName === 'hr_get_leave_types') {
+    return await callMcpInternalApiByEmail(requesterEmail, '/leave/types', 'GET');
+  }
+  if (toolName === 'hr_get_leave_balance') {
+    return await callMcpInternalApiByEmail(
+      requesterEmail,
+      '/leave/balance',
+      'GET',
+      { period: String(args.period || '').trim() }
+    );
+  }
+  if (toolName === 'hr_get_leave_requests') {
+    return await callMcpInternalApiByEmail(requesterEmail, '/leave/requests', 'GET');
+  }
+  if (toolName === 'hr_submit_leave') {
+    return await callMcpInternalApiByEmail(
+      requesterEmail,
+      '/leave/requests',
+      'POST',
+      {},
+      {
+        leave_typeid: String(args.leaveTypeId || '').trim(),
+        start_date: String(args.startDate || '').trim(),
+        days: Number(args.days),
+        ...(args.reason ? { reason: String(args.reason).trim() } : {})
+      }
+    );
+  }
+  if (toolName === 'hr_submit_special_leave') {
+    return await callMcpInternalApiByEmail(
+      requesterEmail,
+      '/leave/requests/special',
+      'POST',
+      {},
+      {
+        leave_typeid: String(args.leaveTypeId || '').trim(),
+        start_date: String(args.startDate || '').trim(),
+        days: Number(args.days),
+        ...(args.reason ? { reason: String(args.reason).trim() } : {})
+      }
+    );
+  }
+  if (toolName === 'hr_cancel_leave_request') {
+    const leaveId = String(args.leaveId || '').trim();
+    return await callMcpInternalApiByEmail(requesterEmail, `/leave/requests/${leaveId}/cancel`, 'POST', {}, {});
+  }
+  if (toolName === 'hr_get_developments') {
+    return await callMcpInternalApiByEmail(requesterEmail, '/developments', 'GET');
+  }
+  if (toolName === 'hr_get_peer_review_summary') {
+    return await callMcpInternalApiByEmail(requesterEmail, '/summary-peer-review', 'GET');
+  }
+  if (toolName === 'hr_admin_profile_search') {
+    return await callMcpInternalApiByEmail(
+      requesterEmail,
+      '/admin/profile/search',
+      'GET',
+      {
+        ...(args.name ? { name: String(args.name).trim() } : {}),
+        ...(args.email ? { email: String(args.email).trim() } : {}),
+        ...(args.id ? { id: String(args.id).trim() } : {}),
+        ...(args.code ? { code: String(args.code).trim() } : {})
+      }
+    );
+  }
+  if (toolName === 'hr_admin_patch_profile') {
+    const employeeId = String(args.employeeId || '').trim();
+    const updates = args.updates && typeof args.updates === 'object' ? args.updates : null;
+    if (!employeeId) throw new Error('employeeId is required');
+    if (!updates) throw new Error('updates object is required');
+
+    return await callMcpInternalApiByEmail(
+      requesterEmail,
+      `/profile/${employeeId}`,
+      'PATCH',
+      {},
+      updates
+    );
+  }
+  if (toolName === 'hr_admin_leave_requests') {
+    return await callMcpInternalApiByEmail(
+      requesterEmail,
+      '/admin/leave-requests',
+      'GET',
+      {
+        ...(args.month ? { month: String(args.month).trim() } : {}),
+        ...(args.year ? { year: String(args.year).trim() } : {}),
+        ...(args.name ? { name: String(args.name).trim() } : {}),
+        ...(args.email ? { email: String(args.email).trim() } : {}),
+        ...(args.employeeId ? { employeeId: String(args.employeeId).trim() } : {}),
+        ...(args.startDate ? { startDate: String(args.startDate).trim() } : {}),
+        ...(args.endDate ? { endDate: String(args.endDate).trim() } : {}),
+        for: 'ai'
+      }
+    );
+  }
+  if (toolName === 'hr_admin_leave_balance_search') {
+    return await callMcpInternalApiByEmail(
+      requesterEmail,
+      '/admin/leave-balance/search',
+      'GET',
+      {
+        period: String(args.period || '').trim(),
+        ...(args.employeeId ? { employeeId: String(args.employeeId).trim() } : {}),
+        ...(args.email ? { email: String(args.email).trim() } : {}),
+        ...(args.name ? { name: String(args.name).trim() } : {})
+      }
+    );
+  }
+  if (toolName === 'hr_admin_position_search') {
+    return await callMcpInternalApiByEmail(
+      requesterEmail,
+      '/admin/position/search',
+      'GET',
+      {
+        ...(args.name ? { name: String(args.name).trim() } : {}),
+        ...(args.email ? { email: String(args.email).trim() } : {}),
+        ...(args.employeeId ? { employeeId: String(args.employeeId).trim() } : {})
+      }
+    );
+  }
+  if (toolName === 'hr_admin_developments_search') {
+    return await callMcpInternalApiByEmail(
+      requesterEmail,
+      '/admin/developments/search',
+      'GET',
+      {
+        ...(args.name ? { name: String(args.name).trim() } : {}),
+        ...(args.email ? { email: String(args.email).trim() } : {})
+      }
+    );
+  }
+  if (toolName === 'hr_admin_peer_review_search') {
+    return await callMcpInternalApiByEmail(
+      requesterEmail,
+      '/admin/summary-peer-review/search',
+      'GET',
+      {
+        ...(args.name ? { name: String(args.name).trim() } : {}),
+        ...(args.email ? { email: String(args.email).trim() } : {}),
+        ...(args.employeeId ? { employeeId: String(args.employeeId).trim() } : {})
+      }
+    );
+  }
+
+  throw new Error(`Unknown MCP tool: ${toolName}`);
+}
+
+fastify.get('/mcp', async (req, reply) => {
+  return {
+    name: 'ecomate-hr-mcp',
+    transport: 'http-jsonrpc',
+    endpoint: '/mcp',
+    auth: MCP_SERVER_TOKEN ? 'Bearer token or x-mcp-token required' : 'no token configured',
+    tools: MCP_TOOLS.map((t) => t.name)
+  };
+});
+
+fastify.post('/mcp', async (req, reply) => {
+  if (!hasMcpAccess(req)) {
+    return reply.code(401).send(mcpErr(null, -32001, 'Unauthorized MCP access'));
+  }
+
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const method = String(body.method || '').trim();
+  const id = body.id;
+
+  if (!method) {
+    return reply.code(400).send(mcpErr(id ?? null, -32600, 'Invalid Request: method is required'));
+  }
+
+  try {
+    if (method === 'initialize') {
+      return reply.send(mcpJson(id, {
+        protocolVersion: '2024-11-05',
+        serverInfo: {
+          name: 'ecomate-hr-mcp',
+          version: '1.0.0'
+        },
+        capabilities: {
+          tools: { listChanged: false }
+        }
+      }));
+    }
+
+    if (method === 'notifications/initialized') {
+      return reply.code(204).send();
+    }
+
+    if (method === 'ping') {
+      return reply.send(mcpJson(id, {}));
+    }
+
+    if (method === 'tools/list') {
+      return reply.send(mcpJson(id, { tools: MCP_TOOLS }));
+    }
+
+    if (method === 'tools/call') {
+      const params = body.params && typeof body.params === 'object' ? body.params : {};
+      const toolName = String(params.name || '').trim();
+      const args = params.arguments && typeof params.arguments === 'object' ? params.arguments : {};
+      if (!toolName) {
+        return reply.code(400).send(mcpErr(id ?? null, -32602, 'Invalid params: tool name is required'));
+      }
+
+      try {
+        const result = await handleMcpToolCall(toolName, args);
+        return reply.send(mcpJson(id, mcpTextResult(result, false)));
+      } catch (toolErr) {
+        fastify.log.error({ msg: 'MCP tool call failed', toolName, error: toolErr.message });
+        return reply.send(mcpJson(id, mcpTextResult({ error: toolErr.message }, true)));
+      }
+    }
+
+    return reply.code(404).send(mcpErr(id ?? null, -32601, `Method not found: ${method}`));
+  } catch (err) {
+    fastify.log.error({ msg: 'MCP request failed', method, error: err.message });
+    return reply.code(500).send(mcpErr(id ?? null, -32603, 'Internal error', { message: err.message }));
+  }
 });
 
 // ==============================
